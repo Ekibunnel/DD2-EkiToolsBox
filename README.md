@@ -1,5 +1,5 @@
 # DD2-EkiToolsBox
-## A mod for DD2 
+## An all-in-one mod to host all my tweaks
 to be used with https://github.com/praydog/REFramework/
 
 Feature:
