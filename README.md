@@ -1,11 +1,11 @@
 # DD2-EkiToolsBox
-##A mod for DD2
+## A mod for DD2 
 to be used with https://github.com/praydog/REFramework/
 
 Feature:
 - InfStamina
-  - Choose between [Always], only when [OutOfBattle] or [off]
+  - Choose between [Always], only when [OutOfBattle] or [Off]
 - InfLanternOil
-  - [On] or [off]
+  - [On] or [Off]
 
 support me on Ko-fi : https://ko-fi.com/ekibunnel
