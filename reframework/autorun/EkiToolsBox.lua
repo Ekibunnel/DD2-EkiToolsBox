@@ -1,5 +1,5 @@
-local Mod = { Name = "EkiToolsBox", version = "0.2", Contributors = "Ekibunnel", Source = "https://github.com/Ekibunnel/DD2-EkiToolsBox" }
-local Cfg = { Debug = false, DrawWindow = false, InfStamina = 1, InfLanternOil = false, HideObjects = { Arisen = {}, MainPawn = {}} }
+local Mod = { Name = "EkiToolsBox", version = "0.21", Contributors = "Ekibunnel", Source = "https://github.com/Ekibunnel/DD2-EkiToolsBox" }
+local Cfg = { Debug = false, DrawWindow = nil, InfStamina = 1, InfLanternOil = false, HideObjects = { Arisen = {}, MainPawn = {}} }
 
 --- UTILS
 
@@ -107,9 +107,11 @@ end
 -- Functions
 
 local function forceUpdateStatusOfSwapObjects(CharacterName) -- todo : no stac overflow
-	PartSwappers[CharacterName]:forceUpdateStatusOfSwapObjects()
-	DebugLog("forceUpdateStatusOfSwapObjects called with NeedUpdate["..CharacterName.."]")
-	NeedUpdate[CharacterName] = false
+	if PartSwappers[CharacterName] ~= nil then
+		PartSwappers[CharacterName]:forceUpdateStatusOfSwapObjects()
+		DebugLog("forceUpdateStatusOfSwapObjects called with NeedUpdate["..CharacterName.."]")
+		NeedUpdate[CharacterName] = false
+	end
 end
 
 local function UpdateHideSwapObjects(CharacterName)
@@ -277,6 +279,7 @@ re.on_draw_ui(function()
 end)
 
 re.on_frame(function()
+	if Cfg.DrawWindow == nil then Cfg.DrawWindow = true end
 	if Cfg.DrawWindow then
 		Cfg.DrawWindow = imgui.begin_window(Mod.Name, true)
 		if Cfg.DrawWindow == false then SaveCfg() end
