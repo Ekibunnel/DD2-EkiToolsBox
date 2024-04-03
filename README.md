@@ -3,7 +3,8 @@
 to be used with https://github.com/praydog/REFramework/
 
 You need to open the mod menu in order to configure the mod.
-Default value will not change anything to the game.
+
+Default values will not change anything to the game.
 
 Feature:
 - Infinite Stamina
