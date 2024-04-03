@@ -337,7 +337,7 @@ re.on_frame(function()
 					end
 					if imgui.is_item_hovered() then
 						imgui.begin_tooltip()
-						imgui.set_tooltip("Open and quit the pause menu to apply\nany change after ticking a checkbox")
+						imgui.set_tooltip("Depending on the order you tick the box part of the body may become invisible\ntry to tick the box into another order or quit to the main menu and go back into your save to fix it")
 						imgui.end_tooltip()
 					end
 					imgui.unindent()
