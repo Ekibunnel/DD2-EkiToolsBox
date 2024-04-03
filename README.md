@@ -9,7 +9,7 @@ Default values will not change anything to the game.
 Feature:
 - Infinite Stamina
   - Choose between [Always], only when [OutOfBattle] or [Off]
-- Infinite LanternOil
+- Infinite Lantern Oil
   - [On] or [Off]
 - Hide Objects
   - Allows you to select which parts of the armor to visually hide
