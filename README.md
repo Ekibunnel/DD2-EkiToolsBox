@@ -12,7 +12,7 @@ Feature:
 - Infinite Lantern Oil
   - [On] or [Off]
 - Infinite NPC Pickup Time
-  - Choose between [On], only when [StillResist] or [Off]
+  - Choose between [On], On but [StillResist] or [Off]
 - Hide Objects
   - Allows you to select which parts of the armor to visually hide
 
