@@ -1,4 +1,4 @@
-local Mod = { Name = "EkiToolsBox", version = "0.3.1", Contributors = "Ekibunnel", Source = "https://github.com/Ekibunnel/DD2-EkiToolsBox" }
+local Mod = { Name = "EkiToolsBox", version = "0.3.3", Contributors = "Ekibunnel", Source = "https://github.com/Ekibunnel/DD2-EkiToolsBox" }
 local Cfg = { Debug = false, DrawWindow = nil, IgnoreReframeworkDrawUI = false, InfStamina = 1, InfLanternOil = false, InfPickupTime = 1, HideObjects = { Arisen = {}, MainPawn = {}} }
 
 --- UTILS
@@ -62,7 +62,6 @@ local function ExtractEnum(Typename, Field)
 				end
 			else
 				enum[i] = { [1] = name, [2] = raw_value }
-				--enum[raw_value] = name
 			end
         end
     end
@@ -104,7 +103,6 @@ EnumCharacterID["ch000000_00"] = ExtractEnum("app.CharacterID","ch000000_00")
 EnumCharacterID["ch100000_00"] = ExtractEnum("app.CharacterID","ch100000_00")
 local HideSwapObjects = { Arisen = nil, MainPawn = nil }
 local PartSwappers = { Arisen = nil, ArisenMokupModel = nil, MainPawn = nil, MainPawnMokupModel = nil } -- ToDo : also do MokupModels for menus?
-local NeedUpdate = {Arisen = false, ArisenMokupModel = false, MainPawn = false, MainPawnMokupModel = false}
 
 local BattleManager = nil
 local InfStaminaRegen = sdk.float_to_ptr(65536)
@@ -114,11 +112,12 @@ local InfStaminaRegen = sdk.float_to_ptr(65536)
 
 -- Functions
 
-local function forceUpdateStatusOfSwapObjects(CharacterName) -- todo : no stac overflow
+local function forceUpdate(CharacterName) -- todo : no stac overflow
 	if PartSwappers[CharacterName] ~= nil then
+		PartSwappers[CharacterName]:get_HideSwapObjects()
 		PartSwappers[CharacterName]:forceUpdateStatusOfSwapObjects()
-		DebugLog("forceUpdateStatusOfSwapObjects called with NeedUpdate["..CharacterName.."]")
-		NeedUpdate[CharacterName] = false
+		PartSwappers[CharacterName]:requestFurMask()
+		DebugLog("forceUpdate called for "..CharacterName.."!")
 	end
 end
 
@@ -147,15 +146,20 @@ local function UpdateHideSwapObjects(CharacterName)
 	end
 	DebugLog("Updated HideSwapObjects for "..CharacterName.." is "..tostring(UpdatedHideSwapObjects))
 	HideSwapObjects[CharacterName] = UpdatedHideSwapObjects
-	NeedUpdate[CharacterName] = true
+	if PartSwappers[CharacterName] ~= nil then
+		forceUpdate(CharacterName)
+	else 
+		DebugLog("UpdateHideSwapObjects PartSwappers is nil skiping forceUpdate")
+	end
 end
 
 local function test_feature()
 	--still cooking the worst code you've ever witness
+	forceUpdate("Arisen")
+	forceUpdate("MainPawn")
 end
 
 -- Hooks
-
 
 sdk.hook(
     sdk.find_type_definition("app.CaughtController"):get_method("setupEscape"),
@@ -175,6 +179,7 @@ sdk.hook(
 		return sdk.to_ptr(0)
 	end
 )
+
 sdk.hook(
 	sdk.find_type_definition("app.StaminaManager"):get_method("add"),
 	function(args)
@@ -216,24 +221,43 @@ sdk.hook(
 	end
 )
 
+sdk.hook(
+    sdk.find_type_definition("via.render.RenderTargetOperator"):get_method("set_OperandTexture"),
+    function(args)
+		DebugLog("Arisen RenderTargetOperator : args[2] to_managed_object get_address : "..tostring(sdk.to_managed_object(args[2]):get_address()))
+		if PartSwappers.Arisen ~= nil and HideSwapObjects.Arisen ~= nil then
+			if sdk.to_managed_object(args[2]) == PartSwappers.Arisen:get_field("_RenderTargetOperator") then
+				args[3] = sdk.to_ptr(0)
+				DebugLog("RenderTargetOperator set_OperandTexture spoofed for Arisen!")
+				return sdk.PreHookResult.CALL_ORIGINAL
+			end
+		end
+		if PartSwappers.MainPawn ~= nil and HideSwapObjects.MainPawn ~= nil then
+			if sdk.to_managed_object(args[2]) == PartSwappers.MainPawn:get_field("_RenderTargetOperator") then
+				args[3] = sdk.to_ptr(0)
+				DebugLog("RenderTargetOperator set_OperandTexture spoofed for MainPawn!")
+				return sdk.PreHookResult.CALL_ORIGINAL
+			end
+		end
+    end,
+    function(retval)
+		return retval
+	end
+)
+
 ----- This work and I feel no shame
 ----- I couldn't find out a way to get parent or child so I had to do this
 ----- if you have a marginally better way to get the ch000000_00 PartSwapper feel free to do a PR on github
 sdk.hook(
 	sdk.find_type_definition("app.PartSwapper"):get_method("lateUpdate"),
 	function (args)
-		if NeedUpdate["Arisen"] == true then
-			forceUpdateStatusOfSwapObjects("Arisen")
-		end
-		if NeedUpdate["MainPawn"] == true then
-			forceUpdateStatusOfSwapObjects("MainPawn")
-		end
 		if PartSwappers.Arisen == nil or PartSwappers.ArisenMokupModel == nil or PartSwappers.MainPawn == nil or PartSwappers.MainPawnMokupModel == nil then
 			local PartSwapper = sdk.to_managed_object(args[2])
 			local CharacterID = PartSwapper:get_CharacterID()
 			if CharacterID == EnumCharacterID.ch000000_00 then
 				if PartSwappers.Arisen == nil and PartSwapper:get_field("_Human") ~= nil then
 					PartSwappers.Arisen = PartSwapper
+					DebugLog("PartSwappers.Arisen : "..tostring(PartSwappers.Arisen).." @"..tostring(PartSwapper:get_address()))
 					sdk.hook_vtable(
 						PartSwapper, PartSwapper:get_type_definition():get_method("onDestroy"),
 						function(args)
@@ -253,7 +277,6 @@ sdk.hook(
 						end
 					)
 					UpdateHideSwapObjects("Arisen")
-					DebugLog("PartSwappers.Arisen : "..tostring(PartSwappers.Arisen).." @"..tostring(PartSwapper:get_address()))
 				elseif PartSwappers.ArisenMokupModel == nil and PartSwapper:get_field("_MockupBuilder") ~= nil then
 					PartSwappers.ArisenMokupModel = PartSwapper
 					DebugLog("PartSwappers.PlayerMokupModel : "..tostring(PartSwappers.ArisenMokupModel).." @"..tostring(PartSwapper:get_address()))
@@ -261,11 +284,12 @@ sdk.hook(
 			elseif CharacterID == EnumCharacterID.ch100000_00 then
 				if PartSwappers.MainPawn == nil and PartSwapper:get_field("_Human") ~= nil then
 					PartSwappers.MainPawn = PartSwapper
+					DebugLog("PartSwappers.MainPawn : "..tostring(PartSwappers.MainPawn).." @"..tostring(PartSwapper:get_address()))
 					sdk.hook_vtable(
 						PartSwapper, PartSwapper:get_type_definition():get_method("onDestroy"),
 						function(args)
 							PartSwappers.MainPawn = nil
-							DebugLog("PartSwappers.MainPawn onDestroy called")
+							DebugLog("PartSwappers.MainPawn onDestroy called!")
 						end, function(retval) return retval end
 					)
 					sdk.hook_vtable(
@@ -280,7 +304,6 @@ sdk.hook(
 						end
 					)
 					UpdateHideSwapObjects("MainPawn")
-					DebugLog("PartSwappers.MainPawn : "..tostring(PartSwappers.MainPawn).." @"..tostring(PartSwapper:get_address()))
 				elseif PartSwappers.MainPawnMokupModel == nil and PartSwapper:get_field("_MockupBuilder") ~= nil then
 					PartSwappers.MainPawnMokupModel = PartSwapper
 					DebugLog("PartSwappers.PlayerMokupModel : "..tostring(PartSwappers.MainPawnMokupModel).." @"..tostring(PartSwapper:get_address()))
@@ -294,8 +317,7 @@ sdk.hook(
 	end
 )
 
-
---- GUI
+----- GUI
 
 local CfgChanged = {}
 local IgnoredValues = {} --store values we don't save directly or don't save at all
@@ -371,11 +393,6 @@ re.on_frame(function()
 							imgui.end_table()
 						end
 					end
-					if imgui.is_item_hovered() then
-						imgui.begin_tooltip()
-						imgui.set_tooltip("Depending on the order you tick the box part of the body may become invisible\ntry to tick the box into another order or quit to the main menu and go back into your save to fix it")
-						imgui.end_tooltip()
-					end
 					imgui.unindent()
 				end
 				imgui.set_next_item_open(HeaderState["HideObjectsMainPawn"])
@@ -405,13 +422,6 @@ re.on_frame(function()
 							end
 							imgui.end_table()
 						end
-					end
-					if imgui.is_item_hovered() then
-						imgui.begin_tooltip()
-						----- Can't find a way to fix that
-						----- If you have a fix feel free to do a PR on GitHub
-						imgui.set_tooltip("Depending on the order you tick the box part of the body may become invisible\ntry to tick the box into another order or quit to the main menu and go back into your save to fix it")
-						imgui.end_tooltip()
 					end
 					imgui.unindent()
 				end
