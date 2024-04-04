@@ -1,5 +1,5 @@
-local Mod = { Name = "EkiToolsBox", version = "0.21", Contributors = "Ekibunnel", Source = "https://github.com/Ekibunnel/DD2-EkiToolsBox" }
-local Cfg = { Debug = false, DrawWindow = nil, InfStamina = 1, InfLanternOil = false, HideObjects = { Arisen = {}, MainPawn = {}} }
+local Mod = { Name = "EkiToolsBox", version = "0.3.1", Contributors = "Ekibunnel", Source = "https://github.com/Ekibunnel/DD2-EkiToolsBox" }
+local Cfg = { Debug = false, DrawWindow = nil, IgnoreReframeworkDrawUI = false, InfStamina = 1, InfLanternOil = false, InfPickupTime = 1, HideObjects = { Arisen = {}, MainPawn = {}} }
 
 --- UTILS
 
@@ -37,7 +37,7 @@ local function SaveCfg()
 	json.dump_file(Mod.Name.."\\"..Mod.Name..".config.json", Cfg)
 end
 
-local function ExtractEnum(Typename, Fieldname)
+local function ExtractEnum(Typename, Field)
     local t = sdk.find_type_definition(Typename)
     if not t then return {} end
 
@@ -50,9 +50,15 @@ local function ExtractEnum(Typename, Fieldname)
             local raw_value = field:get_data(nil)
 
             DebugLog("Enum "..Typename.." : "..name .. " = " .. tostring(raw_value))
-			if Fieldname ~= nil then
-				if Fieldname == name then
-					return raw_value
+			if Field ~= nil then
+				if type(Field) == "string" then
+					if Field == name then
+						return raw_value
+					end
+				else
+					if Field == raw_value then
+						return name
+					end
 				end
 			else
 				enum[i] = { [1] = name, [2] = raw_value }
@@ -74,20 +80,7 @@ end
 
 --- INIT
 
-ClearLogFile()
-DebugLog("- START -")
-
-local EnumCharacterID = {}
-EnumCharacterID["ch000000_00"] = ExtractEnum("app.CharacterID","ch000000_00")
-EnumCharacterID["ch100000_00"] = ExtractEnum("app.CharacterID","ch100000_00")
 local EnumSwapObjects = ExtractEnum("app.charaedit.ch000.Define.SwapObjects")
-local HideSwapObjects = { Arisen = nil, MainPawn = nil }
-local PartSwappers = { Arisen = nil, ArisenMokupModel = nil, MainPawn = nil, MainPawnMokupModel = nil } -- ToDo : also do MokupModels for menus?
-local NeedUpdate = {Arisen = false, ArisenMokupModel = false, MainPawn = false, MainPawnMokupModel = false}
-local ItemManager = nil
-
-local BattleManager = nil
-local InfStaminaRegen = sdk.float_to_ptr(65536)
 
 if not LoadCfg() then
 	Cfg.HideObjects.Arisen = InitTableFromEnum(EnumSwapObjects)
@@ -101,6 +94,21 @@ else
 		Cfg.HideObjects.MainPawn = InitTableFromEnum(EnumSwapObjects)
 	end
 end
+
+ClearLogFile()
+
+DebugLog("- START -")
+
+local EnumCharacterID = {}
+EnumCharacterID["ch000000_00"] = ExtractEnum("app.CharacterID","ch000000_00")
+EnumCharacterID["ch100000_00"] = ExtractEnum("app.CharacterID","ch100000_00")
+local HideSwapObjects = { Arisen = nil, MainPawn = nil }
+local PartSwappers = { Arisen = nil, ArisenMokupModel = nil, MainPawn = nil, MainPawnMokupModel = nil } -- ToDo : also do MokupModels for menus?
+local NeedUpdate = {Arisen = false, ArisenMokupModel = false, MainPawn = false, MainPawnMokupModel = false}
+
+local BattleManager = nil
+local InfStaminaRegen = sdk.float_to_ptr(65536)
+
 
 --- MAIN
 
@@ -142,8 +150,31 @@ local function UpdateHideSwapObjects(CharacterName)
 	NeedUpdate[CharacterName] = true
 end
 
+local function test_feature()
+	--still cooking the worst code you've ever witness
+end
+
 -- Hooks
 
+
+sdk.hook(
+    sdk.find_type_definition("app.CaughtController"):get_method("setupEscape"),
+    function(args)
+		if sdk.to_managed_object(args[2]):get_field("CatchChara").CharacterID == EnumCharacterID.ch000000_00 then
+			if Cfg.InfPickupTime == 2 then
+				args[3]= sdk.float_to_ptr(-1)
+				DebugLog("setup Escape spoofed !")
+				return sdk.PreHookResult.CALL_ORIGINAL
+			elseif Cfg.InfPickupTime == 3 then
+				DebugLog("setup Escape skiped !")
+				return sdk.PreHookResult.SKIP_ORIGINAL
+			end
+		end
+    end,
+    function(retval)
+		return sdk.to_ptr(0)
+	end
+)
 sdk.hook(
 	sdk.find_type_definition("app.StaminaManager"):get_method("add"),
 	function(args)
@@ -264,7 +295,6 @@ sdk.hook(
 )
 
 
-
 --- GUI
 
 local CfgChanged = {}
@@ -280,7 +310,7 @@ end)
 
 re.on_frame(function()
 	if Cfg.DrawWindow == nil then Cfg.DrawWindow = true end
-	if Cfg.DrawWindow then
+	if Cfg.DrawWindow and (reframework:is_drawing_ui() or Cfg.IgnoreReframeworkDrawUI) then
 		Cfg.DrawWindow = imgui.begin_window(Mod.Name, true)
 		if Cfg.DrawWindow == false then SaveCfg() end
 		imgui.push_item_width(-1.0)
@@ -298,6 +328,9 @@ re.on_frame(function()
 				imgui.text("Stamina ")
 				imgui.same_line()
 				CfgChanged["InfStamina"], Cfg.InfStamina = imgui.combo("##InfStamina", Cfg.InfStamina, { "Off", "OutOfBattle", "Always" })
+				imgui.text("NPC Pickup Time ")
+				imgui.same_line()
+				CfgChanged["InfPickupTime"], Cfg.InfPickupTime = imgui.combo("##InfPickUpTime", Cfg.InfPickupTime, { "Off", "StillResist", "On" })
 				imgui.unindent()
 			end
 			imgui.unindent()
@@ -403,6 +436,22 @@ re.on_frame(function()
 			imgui.text("Debug : ")
 			imgui.same_line()
 			CfgChanged["Debug"], Cfg.Debug = imgui.checkbox("##Debug", Cfg.Debug)
+			if CfgChanged["Debug"] and Cfg.Debug == true then
+				ClearLogFile()
+			end
+			imgui.spacing()
+			imgui.text("IgnoreReframeworkDrawUI : ")
+			imgui.same_line()
+			CfgChanged["IgnoreReframeworkDrawUI"], Cfg.IgnoreReframeworkDrawUI = imgui.checkbox("##IgnoreReframeworkDrawUI", Cfg.IgnoreReframeworkDrawUI)
+			imgui.spacing()
+			if imgui.button("test_feature") then
+				test_feature()
+			end
+			if imgui.is_item_hovered() then
+				imgui.begin_tooltip()
+				imgui.set_tooltip("ignore this")
+				imgui.end_tooltip()
+			end
 			imgui.spacing()
 			imgui.text("Version : "..Mod.version)
 			imgui.text("Source : "..Mod.Source)
