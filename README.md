@@ -11,9 +11,9 @@ Feature:
   - Choose between [Always], only when [OutOfBattle] or [Off]
 - Infinite Lantern Oil
   - [On] or [Off]
-- Infinite NPC Pickup Time
+- Infinite NPC Carry Time
   - Choose between [On], On but [StillResist] or [Off]
-- Hide Objects
+- Character Objects
   - Allows you to select which parts of the armor to visually hide
 
 support me on Ko-fi : https://ko-fi.com/ekibunnel
