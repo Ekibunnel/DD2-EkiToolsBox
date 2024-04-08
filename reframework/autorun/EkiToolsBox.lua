@@ -1,5 +1,5 @@
-local Mod = { Name = "EkiToolsBox", version = "0.3.3", Contributors = "Ekibunnel", Source = "https://github.com/Ekibunnel/DD2-EkiToolsBox" }
-local Cfg = { Debug = false, DrawWindow = nil, IgnoreReframeworkDrawUI = false, InfStamina = 1, InfLanternOil = false, InfPickupTime = 1, HideObjects = { Arisen = {}, MainPawn = {}} }
+local Mod = { Name = "EkiToolsBox", version = "0.3.4", Contributors = "Ekibunnel", Source = "https://github.com/Ekibunnel/DD2-EkiToolsBox" }
+local Cfg = { Debug = false, DontSpoofFurMask = false, DrawWindow = nil, IgnoreReframeworkDrawUI = false, InfStamina = 1, InfLanternOil = false, InfCarryTime = 1, CharacterObjects = { Arisen = {}, MainPawn = {} } }
 
 --- UTILS
 
@@ -24,7 +24,11 @@ end
 local function LoadCfg()
 	local jsonCfg = json.load_file(Mod.Name.."\\"..Mod.Name..".config.json")
 	if jsonCfg ~= nil then
-		Cfg = jsonCfg
+		for k,v in pairs(jsonCfg) do
+			if Cfg[k] ~= nil then
+				Cfg[k] = v
+			end
+		end
 		DebugLog("LoadCfg from file : "..json.dump_string(Cfg, 4))
 		return true
 	end
@@ -82,16 +86,17 @@ end
 local EnumSwapObjects = ExtractEnum("app.charaedit.ch000.Define.SwapObjects")
 
 if not LoadCfg() then
-	Cfg.HideObjects.Arisen = InitTableFromEnum(EnumSwapObjects)
-	Cfg.HideObjects.MainPawn = InitTableFromEnum(EnumSwapObjects)
+	Cfg.CharacterObjects.Arisen = InitTableFromEnum(EnumSwapObjects)
+	Cfg.CharacterObjects.MainPawn = InitTableFromEnum(EnumSwapObjects)
 	SaveCfg()
 else
-	if Cfg.HideObjects.Arisen == nil then
-		Cfg.HideObjects.Arisen = InitTableFromEnum(EnumSwapObjects)
+	if Cfg.CharacterObjects.Arisen == nil then
+		Cfg.CharacterObjects.Arisen = InitTableFromEnum(EnumSwapObjects)
 	end
-	if Cfg.HideObjects.MainPawn == nil then
-		Cfg.HideObjects.MainPawn = InitTableFromEnum(EnumSwapObjects)
+	if Cfg.CharacterObjects.MainPawn == nil then
+		Cfg.CharacterObjects.MainPawn = InitTableFromEnum(EnumSwapObjects)
 	end
+	SaveCfg()
 end
 
 ClearLogFile()
@@ -102,7 +107,8 @@ local EnumCharacterID = {}
 EnumCharacterID["ch000000_00"] = ExtractEnum("app.CharacterID","ch000000_00")
 EnumCharacterID["ch100000_00"] = ExtractEnum("app.CharacterID","ch100000_00")
 local HideSwapObjects = { Arisen = nil, MainPawn = nil }
-local PartSwappers = { Arisen = nil, ArisenMokupModel = nil, MainPawn = nil, MainPawnMokupModel = nil } -- ToDo : also do MokupModels for menus?
+local PartSwappers = { Arisen = nil, MainPawn = nil }
+local PartSwappersMokupModel = { Arisen = nil, MainPawn = nil } -- ToDo : also do MokupModels for menus?
 
 local BattleManager = nil
 local InfStaminaRegen = sdk.float_to_ptr(65536)
@@ -112,19 +118,22 @@ local InfStaminaRegen = sdk.float_to_ptr(65536)
 
 -- Functions
 
-local function forceUpdate(CharacterName) -- todo : no stac overflow
+local function forceUpdate(CharacterName)
 	if PartSwappers[CharacterName] ~= nil then
-		PartSwappers[CharacterName]:get_HideSwapObjects()
 		PartSwappers[CharacterName]:forceUpdateStatusOfSwapObjects()
-		PartSwappers[CharacterName]:requestFurMask()
-		DebugLog("forceUpdate called for "..CharacterName.."!")
+
+		DebugLog("forceUpdate called for PartSwappers."..CharacterName.."!")
+	end
+	if PartSwappersMokupModel[CharacterName] ~= nil then
+		PartSwappersMokupModel[CharacterName]:forceUpdateStatusOfSwapObjects()
+		DebugLog("forceUpdate called for PartSwappersMokupModel."..CharacterName.."!")
 	end
 end
 
 local function UpdateHideSwapObjects(CharacterName)
 	local UpdatedHideSwapObjects = nil
-	if Cfg.HideObjects[CharacterName] ~= nil then
-		for k, v in pairs(Cfg.HideObjects[CharacterName]) do
+	if Cfg.CharacterObjects[CharacterName] ~= nil then
+		for k, v in pairs(Cfg.CharacterObjects[CharacterName]) do
 			if v ~= nil then
 				local EnumSwapObjectsValue = nil
 				for kk, vv in pairs(EnumSwapObjects) do
@@ -136,7 +145,7 @@ local function UpdateHideSwapObjects(CharacterName)
 				end
 				if EnumSwapObjectsValue == nil then
 					DebugLog("Updated HideSwapObjects error EnumSwapObjectsValue is nil!")
-					DebugLog("Cfg.HideObjects["..CharacterName.."] : '"..k.."' is a correct enum keyname?")
+					DebugLog("Cfg.CharacterObjects["..CharacterName.."] : '"..k.."' is a correct enum keyname?")
 					break
 				end
 				if UpdatedHideSwapObjects == nil then UpdatedHideSwapObjects = 0 end
@@ -148,28 +157,34 @@ local function UpdateHideSwapObjects(CharacterName)
 	HideSwapObjects[CharacterName] = UpdatedHideSwapObjects
 	if PartSwappers[CharacterName] ~= nil then
 		forceUpdate(CharacterName)
-	else 
-		DebugLog("UpdateHideSwapObjects PartSwappers is nil skiping forceUpdate")
+	else
+		DebugLog("UpdateHideSwapObjects PartSwappers."..CharacterName.." is nil skiping forceUpdate")
 	end
 end
 
-local function test_feature()
-	--still cooking the worst code you've ever witness
-	forceUpdate("Arisen")
-	forceUpdate("MainPawn")
+local function ForceUpdateAll()
+	for key, value in pairs(PartSwappers) do
+		forceUpdate(key)
+	end
+	DebugLog("ForceUpdateAll done!")
+end
+
+local function testfunction()
 end
 
 -- Hooks
+
+
 
 sdk.hook(
     sdk.find_type_definition("app.CaughtController"):get_method("setupEscape"),
     function(args)
 		if sdk.to_managed_object(args[2]):get_field("CatchChara").CharacterID == EnumCharacterID.ch000000_00 then
-			if Cfg.InfPickupTime == 2 then
+			if Cfg.InfCarryTime == 2 then
 				args[3]= sdk.float_to_ptr(-1)
 				DebugLog("setup Escape spoofed !")
 				return sdk.PreHookResult.CALL_ORIGINAL
-			elseif Cfg.InfPickupTime == 3 then
+			elseif Cfg.InfCarryTime == 3 then
 				DebugLog("setup Escape skiped !")
 				return sdk.PreHookResult.SKIP_ORIGINAL
 			end
@@ -224,19 +239,16 @@ sdk.hook(
 sdk.hook(
     sdk.find_type_definition("via.render.RenderTargetOperator"):get_method("set_OperandTexture"),
     function(args)
-		DebugLog("Arisen RenderTargetOperator : args[2] to_managed_object get_address : "..tostring(sdk.to_managed_object(args[2]):get_address()))
-		if PartSwappers.Arisen ~= nil and HideSwapObjects.Arisen ~= nil then
-			if sdk.to_managed_object(args[2]) == PartSwappers.Arisen:get_field("_RenderTargetOperator") then
-				args[3] = sdk.to_ptr(0)
-				DebugLog("RenderTargetOperator set_OperandTexture spoofed for Arisen!")
-				return sdk.PreHookResult.CALL_ORIGINAL
-			end
-		end
-		if PartSwappers.MainPawn ~= nil and HideSwapObjects.MainPawn ~= nil then
-			if sdk.to_managed_object(args[2]) == PartSwappers.MainPawn:get_field("_RenderTargetOperator") then
-				args[3] = sdk.to_ptr(0)
-				DebugLog("RenderTargetOperator set_OperandTexture spoofed for MainPawn!")
-				return sdk.PreHookResult.CALL_ORIGINAL
+		--DebugLog("RenderTargetOperator : args[2] to_managed_object get_address : "..tostring(sdk.to_managed_object(args[2]):get_address())) --spam
+		if Cfg.DontSpoofFurMask == false then
+			for PS, PSvalue in pairs(PartSwappers) do
+				if HideSwapObjects[PS] ~= nil then
+					if sdk.to_managed_object(args[2]) == PSvalue:get_field("_RenderTargetOperator") then
+						args[3] = sdk.to_ptr(0)
+						DebugLog("RenderTargetOperator set_OperandTexture spoofed for PartSwappers."..PS.."!")
+						return sdk.PreHookResult.CALL_ORIGINAL
+					end
+				end
 			end
 		end
     end,
@@ -251,62 +263,49 @@ sdk.hook(
 sdk.hook(
 	sdk.find_type_definition("app.PartSwapper"):get_method("lateUpdate"),
 	function (args)
-		if PartSwappers.Arisen == nil or PartSwappers.ArisenMokupModel == nil or PartSwappers.MainPawn == nil or PartSwappers.MainPawnMokupModel == nil then
+		if PartSwappers.Arisen == nil or PartSwappersMokupModel.Arisen == nil or PartSwappers.MainPawn == nil or PartSwappersMokupModel.MainPawn == nil then
 			local PartSwapper = sdk.to_managed_object(args[2])
 			local CharacterID = PartSwapper:get_CharacterID()
+			local PartSwapperName = nil
 			if CharacterID == EnumCharacterID.ch000000_00 then
-				if PartSwappers.Arisen == nil and PartSwapper:get_field("_Human") ~= nil then
-					PartSwappers.Arisen = PartSwapper
-					DebugLog("PartSwappers.Arisen : "..tostring(PartSwappers.Arisen).." @"..tostring(PartSwapper:get_address()))
-					sdk.hook_vtable(
-						PartSwapper, PartSwapper:get_type_definition():get_method("onDestroy"),
-						function(args)
-							PartSwappers.Arisen = nil
-							DebugLog("PartSwappers.Arisen onDestroy called")
-						end, function(retval) return retval end
-					)
-					sdk.hook_vtable(
-						PartSwapper, PartSwapper:get_type_definition():get_method("get_HideSwapObjects"),
-						function(args) end,
-						function(retval)
-							if HideSwapObjects.Arisen ~= nil then
-								--DebugLog("PartSwappers.Arisen get_HideSwapObjects spoofed!") --spam
-								return sdk.to_ptr(HideSwapObjects.Arisen)
-							end
-							return retval
-						end
-					)
-					UpdateHideSwapObjects("Arisen")
-				elseif PartSwappers.ArisenMokupModel == nil and PartSwapper:get_field("_MockupBuilder") ~= nil then
-					PartSwappers.ArisenMokupModel = PartSwapper
-					DebugLog("PartSwappers.PlayerMokupModel : "..tostring(PartSwappers.ArisenMokupModel).." @"..tostring(PartSwapper:get_address()))
-				end
+				PartSwapperName = "Arisen"
 			elseif CharacterID == EnumCharacterID.ch100000_00 then
-				if PartSwappers.MainPawn == nil and PartSwapper:get_field("_Human") ~= nil then
-					PartSwappers.MainPawn = PartSwapper
-					DebugLog("PartSwappers.MainPawn : "..tostring(PartSwappers.MainPawn).." @"..tostring(PartSwapper:get_address()))
+				PartSwapperName = "MainPawn"
+			end
+			if PartSwapperName ~= nil then
+				if PartSwappers[PartSwapperName] == nil and PartSwapper:get_field("_Human") ~= nil then
+					PartSwappers[PartSwapperName] = PartSwapper
+					DebugLog("PartSwappers."..PartSwapperName.." : "..tostring(PartSwappers[PartSwapperName]).." @"..tostring(PartSwapper:get_address()))
 					sdk.hook_vtable(
 						PartSwapper, PartSwapper:get_type_definition():get_method("onDestroy"),
 						function(args)
-							PartSwappers.MainPawn = nil
-							DebugLog("PartSwappers.MainPawn onDestroy called!")
+							PartSwappers[PartSwapperName] = nil
+							DebugLog("PartSwappers."..PartSwapperName.." onDestroy called")
 						end, function(retval) return retval end
 					)
 					sdk.hook_vtable(
 						PartSwapper, PartSwapper:get_type_definition():get_method("get_HideSwapObjects"),
 						function(args) end,
 						function(retval)
-							if HideSwapObjects.MainPawn ~= nil then
-								--DebugLog("PartSwappers.MainPawn get_HideSwapObjects spoofed!") --spam
-								return sdk.to_ptr(HideSwapObjects.MainPawn)
+							if HideSwapObjects[PartSwapperName] ~= nil then
+								--DebugLog("PartSwappers."..PartSwapperName.." get_HideSwapObjects spoofed!") --spam
+								return sdk.to_ptr(HideSwapObjects[PartSwapperName])
 							end
 							return retval
 						end
 					)
-					UpdateHideSwapObjects("MainPawn")
-				elseif PartSwappers.MainPawnMokupModel == nil and PartSwapper:get_field("_MockupBuilder") ~= nil then
-					PartSwappers.MainPawnMokupModel = PartSwapper
-					DebugLog("PartSwappers.PlayerMokupModel : "..tostring(PartSwappers.MainPawnMokupModel).." @"..tostring(PartSwapper:get_address()))
+					UpdateHideSwapObjects(PartSwapperName)
+				elseif PartSwappersMokupModel[PartSwapperName] == nil and PartSwapper:get_field("_MockupBuilder") ~= nil then
+					PartSwappersMokupModel[PartSwapperName] = PartSwapper
+					DebugLog("PartSwappersMokupModel."..PartSwapperName.." : "..tostring(PartSwappersMokupModel[PartSwapperName]).." @"..tostring(PartSwapper:get_address()))
+					sdk.hook_vtable(
+						PartSwapper, PartSwapper:get_type_definition():get_method("onDestroy"),
+						function(args)
+							PartSwappersMokupModel[PartSwapperName] = nil
+							DebugLog("PartSwappersMokupModel."..PartSwapperName.." onDestroy called")
+						end, function(retval) return retval end
+					)
+					UpdateHideSwapObjects(PartSwapperName)
 				end
 			end
 		end
@@ -321,7 +320,7 @@ sdk.hook(
 
 local CfgChanged = {}
 local IgnoredValues = {} --store values we don't save directly or don't save at all
-local HeaderState = {Gameplay = true, Visual = true, Debug = false, Infinite = true, HideObjects = true, HideObjectsArisen = true, HideObjectsMainPawn = true  }
+local HeaderState = { Gameplay = true, Visual = true, Debug = false, Infinite = true, CharacterObjects = true, CharacterObjectsArisen = true, CharacterObjectsMainPawn = true  }
 
 re.on_draw_ui(function()
 	if imgui.button(Mod.Name.."'s Menu") then
@@ -350,9 +349,9 @@ re.on_frame(function()
 				imgui.text("Stamina ")
 				imgui.same_line()
 				CfgChanged["InfStamina"], Cfg.InfStamina = imgui.combo("##InfStamina", Cfg.InfStamina, { "Off", "OutOfBattle", "Always" })
-				imgui.text("NPC Pickup Time ")
+				imgui.text("NPC Carry Time ")
 				imgui.same_line()
-				CfgChanged["InfPickupTime"], Cfg.InfPickupTime = imgui.combo("##InfPickUpTime", Cfg.InfPickupTime, { "Off", "StillResist", "On" })
+				CfgChanged["InfCarryTime"], Cfg.InfCarryTime = imgui.combo("##InfPickUpTime", Cfg.InfCarryTime, { "Off", "StillResist", "On" })
 				imgui.unindent()
 			end
 			imgui.unindent()
@@ -361,69 +360,43 @@ re.on_frame(function()
 		HeaderState["Visual"] = imgui.collapsing_header("Visual")
 		if HeaderState["Visual"] then
 			imgui.indent()
-			imgui.set_next_item_open(HeaderState["HideObjects"])
-			HeaderState["HideObjects"] = imgui.collapsing_header("Hide Objects")
-			if HeaderState["HideObjects"] then
+			imgui.set_next_item_open(HeaderState["CharacterObjects"])
+			HeaderState["CharacterObjects"] = imgui.collapsing_header("Character Objects")
+			if HeaderState["CharacterObjects"] then
 				imgui.indent()
-				imgui.set_next_item_open(HeaderState["HideObjectsArisen"])
-				HeaderState["HideObjectsArisen"] = imgui.collapsing_header("Arisen")
-				if HeaderState["HideObjectsArisen"] then
-					imgui.indent()
-					if PartSwappers.Arisen ~= nil or Cfg.Debug then
-						if imgui.begin_table("ArisenHideObjectsTable", 3) then
-							local i = 0
-							imgui.table_next_row()
-							for k, v in pairs(EnumSwapObjects) do
-								if i > 2 then
-									i = 0
+				for PS, PSvalue in pairs(PartSwappers) do
+					if PSvalue ~= nil or Cfg.Debug then
+						imgui.set_next_item_open(HeaderState["CharacterObjects"..PS])
+						HeaderState["CharacterObjects"..PS] = imgui.collapsing_header(PS)
+						if HeaderState["CharacterObjects"..PS] then
+							imgui.indent()
+							
+								if imgui.begin_table(PS.."CharacterObjectsTable", 3) then
+									local i = 0
 									imgui.table_next_row()
-								end
-								imgui.table_set_column_index(i)
-								CfgChanged["HideObjects_Arisen_"..v[1]], IgnoredValues["HideObjects_Arisen_"..v[1]] = imgui.checkbox(v[1].."##HideObjects_Arisen_"..v[1], Cfg.HideObjects.Arisen[v[1]])
-								if CfgChanged["HideObjects_Arisen_"..v[1]] == true then
-									if IgnoredValues["HideObjects_Arisen_"..v[1]] then
-										Cfg.HideObjects.Arisen[v[1]] = "Hiden"
-									else
-										Cfg.HideObjects.Arisen[v[1]] = nil
+									for k, v in pairs(EnumSwapObjects) do
+										if i > 2 then
+											i = 0
+											imgui.table_next_row()
+										end
+										imgui.table_set_column_index(i)
+										CfgChanged["CharacterObjects_"..PS.."_"..v[1]], IgnoredValues["CharacterObjects_"..PS.."_"..v[1]] = imgui.checkbox(v[1].."##CharacterObjects_"..PS.."_"..v[1], Cfg.CharacterObjects[PS][v[1]])
+										if CfgChanged["CharacterObjects_"..PS.."_"..v[1]] == true then
+											if IgnoredValues["CharacterObjects_"..PS.."_"..v[1]] then
+												Cfg.CharacterObjects[PS][v[1]] = "Hiden"
+											else
+												Cfg.CharacterObjects[PS][v[1]] = nil
+											end
+											UpdateHideSwapObjects(PS)
+										end
+										i = i+1
 									end
-									UpdateHideSwapObjects("Arisen")
+									imgui.end_table()
 								end
-								i = i+1
-							end
-							imgui.end_table()
+							
+							imgui.unindent()
 						end
 					end
-					imgui.unindent()
-				end
-				imgui.set_next_item_open(HeaderState["HideObjectsMainPawn"])
-				HeaderState["HideObjectsMainPawn"] = imgui.collapsing_header("Main Pawn")
-				if HeaderState["HideObjectsMainPawn"] then
-					imgui.indent()
-					if PartSwappers.MainPawn ~= nil or Cfg.Debug then
-						if imgui.begin_table("MainPawnHideObjectsTable", 3) then
-							local i = 0
-							imgui.table_next_row()
-							for k, v in pairs(EnumSwapObjects) do
-								if i > 2 then
-									i = 0
-									imgui.table_next_row()
-								end
-								imgui.table_set_column_index(i)
-								CfgChanged["HideObjects_MainPawn_"..v[1]], IgnoredValues["HideObjects_MainPawn_"..v[1]] = imgui.checkbox(v[1].."##HideObjects_MainPawn_"..v[1], Cfg.HideObjects.MainPawn[v[1]])
-								if CfgChanged["HideObjects_MainPawn_"..v[1]] == true then
-									if IgnoredValues["HideObjects_MainPawn_"..v[1]] then
-										Cfg.HideObjects.MainPawn[v[1]] = "Hiden"
-									else
-										Cfg.HideObjects.MainPawn[v[1]] = nil
-									end
-									UpdateHideSwapObjects("MainPawn")
-								end
-								i = i+1
-							end
-							imgui.end_table()
-						end
-					end
-					imgui.unindent()
 				end
 				imgui.unindent()
 			end
@@ -443,6 +416,19 @@ re.on_frame(function()
 				SaveCfg()
 			end
 			imgui.spacing()
+			imgui.text("DontSpoofFurMask : ")
+			imgui.same_line()
+			CfgChanged["DontSpoofFurMask"], Cfg.DontSpoofFurMask = imgui.checkbox("##DontSpoofFurMask", Cfg.DontSpoofFurMask)
+			if imgui.is_item_hovered() then
+				imgui.begin_tooltip()
+				imgui.set_tooltip("If your fur clip through your armor when Hide Objects is active try enabling this.\nIt can break and make part of the body invisible")
+				imgui.end_tooltip()
+			end
+			imgui.spacing()
+			imgui.text("IgnoreReframeworkDrawUI : ")
+			imgui.same_line()
+			CfgChanged["IgnoreReframeworkDrawUI"], Cfg.IgnoreReframeworkDrawUI = imgui.checkbox("##IgnoreReframeworkDrawUI", Cfg.IgnoreReframeworkDrawUI)
+			imgui.spacing()
 			imgui.text("Debug : ")
 			imgui.same_line()
 			CfgChanged["Debug"], Cfg.Debug = imgui.checkbox("##Debug", Cfg.Debug)
@@ -450,17 +436,12 @@ re.on_frame(function()
 				ClearLogFile()
 			end
 			imgui.spacing()
-			imgui.text("IgnoreReframeworkDrawUI : ")
-			imgui.same_line()
-			CfgChanged["IgnoreReframeworkDrawUI"], Cfg.IgnoreReframeworkDrawUI = imgui.checkbox("##IgnoreReframeworkDrawUI", Cfg.IgnoreReframeworkDrawUI)
-			imgui.spacing()
-			if imgui.button("test_feature") then
-				test_feature()
+			if imgui.button("ForceUpdateAll") then
+				ForceUpdateAll()
 			end
-			if imgui.is_item_hovered() then
-				imgui.begin_tooltip()
-				imgui.set_tooltip("ignore this")
-				imgui.end_tooltip()
+			imgui.spacing()
+			if imgui.button("TEST") then
+				testfunction()
 			end
 			imgui.spacing()
 			imgui.text("Version : "..Mod.version)
