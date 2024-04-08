@@ -18,5 +18,4 @@ Feature:
 
 support me on Ko-fi : https://ko-fi.com/ekibunnel
 
-![DD2_1712207906_f721cad3](https://github.com/Ekibunnel/DD2-EkiToolsBox/assets/7073622/3652565e-09a2-4339-af63-1f25cad92445)
-
+![image](https://github.com/Ekibunnel/DD2-EkiToolsBox/assets/7073622/07e24ed2-924b-4508-91db-c7d2d63a645c)
