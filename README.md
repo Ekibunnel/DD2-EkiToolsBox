@@ -13,9 +13,10 @@ Feature:
   - [On] or [Off]
 - Infinite NPC Carry Time
   - Choose between [On], On but [StillResist] or [Off]
-- Character Objects
+- Character
   - Allows you to select which parts of the armor to visually hide
 
 support me on Ko-fi : https://ko-fi.com/ekibunnel
 
-![image](https://github.com/Ekibunnel/DD2-EkiToolsBox/assets/7073622/07e24ed2-924b-4508-91db-c7d2d63a645c)
+![image](https://github.com/Ekibunnel/DD2-EkiToolsBox/assets/7073622/e1c548a2-1df0-4829-aeb2-7a28c12d3124)
+
