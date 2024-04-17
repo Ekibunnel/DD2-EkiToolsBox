@@ -1,7 +1,7 @@
 local Mod = {
 	Info = {
 		Name = "EkiToolsBox",
-		Version = "0.4.0",
+		Version = "0.4.1",
 		Contributors = "Ekibunnel",
 		Source = "https://github.com/Ekibunnel/DD2-EkiToolsBox"
 	},
@@ -87,7 +87,7 @@ local function LoadPreset(Name, Meta)
 			MetaString = "."..string.lower(Meta._Name).."."..string.lower(Meta._Nickname)
 		end
 	end
-	local jsonPreset = json.load_file(Mod.Info.Name.."\\"..Mod.Info.Name..".preset."..PresetName..MetaString..".json", Mod.Presets[Name])
+	local jsonPreset = json.load_file(Mod.Info.Name.."\\"..Mod.Info.Name..".preset."..PresetName..MetaString..".json")
 	if jsonPreset ~= nil then
 		for k,v in pairs(jsonPreset) do
 			if Mod.Presets[Name][k] ~= nil then
