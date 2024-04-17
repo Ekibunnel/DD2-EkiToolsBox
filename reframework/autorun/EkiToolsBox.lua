@@ -1,7 +1,7 @@
 local Mod = {
 	Info = {
 		Name = "EkiToolsBox",
-		Version = "0.4.1",
+		Version = "0.4.2",
 		Contributors = "Ekibunnel",
 		Source = "https://github.com/Ekibunnel/DD2-EkiToolsBox"
 	},
@@ -21,6 +21,15 @@ local Mod = {
 }
 
 --- UTILS
+
+local function StrToHex(String)
+	local StrToHex = ""
+	for i = 1, #String do
+        local char = string.sub(String, i, i)
+        StrToHex = StrToHex..string.format("%02X", string.byte(char))
+    end
+	return StrToHex
+end
 
 local function RoundNumber(Num, Precision)
 	local FormatPrecision = 2
@@ -84,7 +93,7 @@ local function LoadPreset(Name, Meta)
 	local MetaString = ""
 	if Meta ~= nil then
 		if Meta._Name ~= nil and Meta._Nickname ~= nil then
-			MetaString = "."..string.lower(Meta._Name).."."..string.lower(Meta._Nickname)
+			MetaString = "."..string.lower(Meta._Nickname).."."..StrToHex(Meta._Name)
 		end
 	end
 	local jsonPreset = json.load_file(Mod.Info.Name.."\\"..Mod.Info.Name..".preset."..PresetName..MetaString..".json")
@@ -110,7 +119,7 @@ local function SavePreset(Name, Meta)
 	local MetaString = ""
 	if Meta ~= nil then
 		if Meta._Name ~= nil and Meta._Nickname ~= nil then
-			MetaString = "."..string.lower(Meta._Name).."."..string.lower(Meta._Nickname)
+			MetaString = "."..string.lower(Meta._Nickname).."."..StrToHex(Meta._Name)
 		end
 	end
 	DebugLog("SavePreset : "..json.dump_string(Mod.Presets[Name], 4))
