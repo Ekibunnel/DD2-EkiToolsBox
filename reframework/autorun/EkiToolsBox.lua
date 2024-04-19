@@ -1,7 +1,7 @@
 local Mod = {
 	Info = {
 		Name = "EkiToolsBox",
-		Version = "0.4.2",
+		Version = "0.4.3",
 		Contributors = "Ekibunnel",
 		Source = "https://github.com/Ekibunnel/DD2-EkiToolsBox"
 	},
@@ -126,6 +126,23 @@ local function SavePreset(Name, Meta)
 	return json.dump_file(Mod.Info.Name.."\\"..Mod.Info.Name..".preset."..PresetName..MetaString..".json", Mod.Presets[Name])
 end
 
+local function GetChildsFromTransform(Transform, ChildGameObjectName)
+	--- Original function provided by alphaZomega
+    local children = {}
+    local child = Transform:call("get_Child")
+    while child do
+		if ChildGameObjectName ~= nil and child:get_GameObject():get_Name() == ChildGameObjectName then
+			return child
+		end
+        table.insert(children, child)
+        child = child:call("get_Next")
+    end
+	if ChildGameObjectName == nil then
+		return children[1] and children
+	end
+    return nil
+end
+
 local function ExtractEnum(Typename, Field)
     local t = sdk.find_type_definition(Typename)
     if not t then return {} end
@@ -192,6 +209,7 @@ local Characters = {
 		Mesh = nil,
 		Human = nil,
 		LanternController = nil,
+		LanternGameObject = nil,
 		Character = nil,
 		HideSwapObjects = nil,
 		CaughtController = nil,
@@ -205,6 +223,7 @@ local ManagedSingleton = { CharacterManager = nil, BattleManager = nil, PawnMana
 local TickCounter = 0
 local DoSetupPawns = false
 local DoForceUpdateAll = false
+local DoUpdateAllLantern = false
 
 --- MAIN
 
@@ -322,6 +341,7 @@ local function InitCharactersTable(Name, Index)
 		Mesh = nil,
 		Human = nil,
 		LanternController = nil,
+		LanternGameObject = nil,
 		Character = nil,
 		HideSwapObjects = nil,
 		CaughtController = nil,
@@ -347,6 +367,7 @@ end
 local function InitPreset(Name)
 	local DefaultPreset = {
 		Fur_MaskMap_Hand = Mod.Variable.DefaultFurMaskMapHand,
+		HideLantern = false,
 		SwapObjectsToHide = InitTableFromEnum(ExtractedEnums.SwapObjects)
 	}
 	if Name ~= nil then
@@ -549,6 +570,11 @@ local function PopulateCharacters(NameOrIndex)
 		end
 	end
 	
+	local LanternTransform = GetChildsFromTransform(Characters[NewIndex].GameObject:get_Transform(), "lantern_000")
+	if LanternTransform ~= nil then
+		Characters[NewIndex].LanternGameObject = LanternTransform:get_GameObject()
+	end
+
 	ExtractComponentToCharacters(NameOrIndex, "via.render.Mesh")
 
 	if ExtractComponentToCharacters(NameOrIndex, "app.PartSwapper") then
@@ -563,6 +589,18 @@ local function PopulateCharacters(NameOrIndex)
 	end
 
 	return true
+end
+
+local function UpdateLantern(CharacterName)
+	local LanternGameObj = Characters[ModCharaId[CharacterName]].LanternGameObject
+	local ShouldDrawLantern = 0x1
+	if Mod.Presets[CharacterName].HideLantern == true then ShouldDrawLantern = 0x0 end
+	if LanternGameObj ~= nil then
+		LanternGameObj:write_byte(0x10, ShouldDrawLantern)
+		LanternGameObj:write_byte(0x11, ShouldDrawLantern)
+		LanternGameObj:set_UpdateSelf(ShouldDrawLantern)
+		DebugLog("UpdateLantern called for Characters[ModCharaId["..CharacterName.."]] !")
+	end
 end
 
 local function ForceUpdate(CharacterName)
@@ -615,6 +653,8 @@ local function ApplyPreset(Name)
 	UpdateHideSwapObjects(Name)
 
 	ForceUpdate(Name)
+
+	UpdateLantern(Name)
 
 	return true
 end
@@ -710,6 +750,15 @@ local function Setup()
 	return true
 end
 
+local function UpdateAllLantern()
+	for key, value in pairs(Characters) do
+		if value.LanternGameObject ~= nil then
+			UpdateLantern(ModCharaId[key])
+		end
+	end
+	DebugLog("UpdateAllLantern done!")
+end
+
 local function ForceUpdateAll()
 	for Name, value in pairs(Mod.Presets) do
 		ForceUpdate(Name)
@@ -720,35 +769,30 @@ end
 re.on_pre_application_entry("UpdateBehavior", function()
 	if Characters[ModCharaId.Arisen].GameObject == nil then
 		if TickCounter == 0 then
-			if not Setup() then
-				TickCounter = TickCounter + 1
-			end
-		elseif TickCounter > Mod.Variable.TicksToWait then
-			TickCounter = 0
-		else
-			TickCounter = TickCounter + 1
+			Setup()
 		end
 	else
-		if DoSetupPawns == true then
-			if TickCounter > Mod.Variable.TicksToWait then
-				TickCounter = 0
+		if TickCounter == 0 then
+			if DoUpdateAllLantern == true then
+				DoUpdateAllLantern = false
+				UpdateAllLantern()
+			end
+			if DoForceUpdateAll == true then
+				DoForceUpdateAll = false
+				ForceUpdateAll()
+			end
+			if DoSetupPawns == true then
 				DoSetupPawns = false
 				SetupPawns()
 				DoForceUpdateAll = true
-			else
-				TickCounter = TickCounter + 1
-			end
-		elseif DoForceUpdateAll == true then
-			if TickCounter > Mod.Variable.TicksToWait then
-				TickCounter = 0
-				DoForceUpdateAll = false
-				ForceUpdateAll()
-			else
-				TickCounter = TickCounter + 1
 			end
 		end
 	end
-
+	if TickCounter > Mod.Variable.TicksToWait then
+		TickCounter = 0
+	else
+		TickCounter = TickCounter + 1
+	end
 end)
 
 local function testfunction(arg)
@@ -820,6 +864,15 @@ sdk.hook(
 				end
 			end
 		end
+		return retval
+	end
+)
+
+sdk.hook(
+	sdk.find_type_definition("app.TurnLantern"):get_method("execTurn"),
+	function(args) end,
+	function(retval)
+			DoUpdateAllLantern = true
 		return retval
 	end
 )
@@ -901,6 +954,9 @@ re.on_frame(function()
 								imgui.set_tooltip("0.0 : is the default value and will make body part invisible\n0.05 : will show the body but hide the fur\n1.0 : Will show the body and the full fur no matter what, it create clipping issue between armor and fur")
 								imgui.end_tooltip()
 							end
+							imgui.text("Hide Lantern : ")
+							imgui.same_line()
+							PresetChanged["HideLantern"..Character.Name], Mod.Presets[Character.Name].HideLantern = imgui.checkbox("##HideLantern"..Character.Name, Mod.Presets[Character.Name].HideLantern)
 							imgui.set_next_item_open(HeaderState["SwapObjectsToHide"..Character.Name])
 							HeaderState["SwapObjectsToHide"..Character.Name] = imgui.collapsing_header("Hide Parts")
 							if HeaderState["SwapObjectsToHide"..Character.Name] then
