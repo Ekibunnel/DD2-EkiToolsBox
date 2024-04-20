@@ -1,7 +1,7 @@
 local Mod = {
 	Info = {
 		Name = "EkiToolsBox",
-		Version = "0.4.3",
+		Version = "0.4.4",
 		Contributors = "Ekibunnel",
 		Source = "https://github.com/Ekibunnel/DD2-EkiToolsBox"
 	},
@@ -14,8 +14,10 @@ local Mod = {
 		InfCarryTime = 1
 	},
 	Variable = {
-		TicksToWait = 69,
-		DefaultFurMaskMapHand = 0.05
+		TicksToWait = 70,
+		DefaultFurMaskMapHand = 0.05,
+		DefaultConsumeOilSecSpeed = 0.0125,
+		BackupConsumeOilSecSpeed = nil
 	},
 	Presets = {}
 }
@@ -209,7 +211,7 @@ local Characters = {
 		Mesh = nil,
 		Human = nil,
 		LanternController = nil,
-		LanternGameObject = nil,
+		LanternMesh = nil,
 		Character = nil,
 		HideSwapObjects = nil,
 		CaughtController = nil,
@@ -221,9 +223,11 @@ local Characters = {
 local ManagedSingleton = { CharacterManager = nil, BattleManager = nil, PawnManager = nil }
 
 local TickCounter = 0
-local DoSetupPawns = false
-local DoForceUpdateAll = false
-local DoUpdateAllLantern = false
+local OnTickCounterZero = {
+	DoSetupPawns = nil,
+	DoForceUpdateAll = nil,
+	DoSetupLantern = nil
+}
 
 --- MAIN
 
@@ -250,35 +254,6 @@ function HookCharacterOnDestroy(NameOrIndex)
 		end
 	)
 	DebugLog("HookCharacterOnDestroy Characters["..ModCharaId[NewIndex].."] onDestroy is hooked !")
-	return true
-end
-
-function HookLanternControllerConsumeOil(NameOrIndex)
-	local NewIndex = nil
-	if type(NameOrIndex) == "string" then
-		NewIndex = ModCharaId[NameOrIndex]
-	else
-		NewIndex = NameOrIndex
-	end
-	if Characters[NewIndex].LanternController == nil then
-		DebugLog("HookLanternControllerConsumeOil LanternController is null, aborting!")
-		return false
-	end
-	sdk.hook_vtable(
-		Characters[NewIndex].LanternController, Characters[NewIndex].LanternController:get_type_definition():get_method("consumeOil"),
-		function(args)
-			if Mod.Cfg.InfLanternOil == true then
-				--DebugLog("Consume Oil skiped !") --spam
-				return sdk.PreHookResult.SKIP_ORIGINAL
-			else
-				return sdk.PreHookResult.CALL_ORIGINAL
-			end
-    	end,
-		function(retval)
-			return sdk.to_ptr(0)
-		end
-	)
-	DebugLog("HookLanternControllerConsumeOil LanternController consumeOil is hooked for Characters["..ModCharaId[NewIndex].."] !")
 	return true
 end
 
@@ -341,7 +316,7 @@ local function InitCharactersTable(Name, Index)
 		Mesh = nil,
 		Human = nil,
 		LanternController = nil,
-		LanternGameObject = nil,
+		LanternMesh = nil,
 		Character = nil,
 		HideSwapObjects = nil,
 		CaughtController = nil,
@@ -548,6 +523,41 @@ local function InitPawnsModCharaId()
 	return true
 end
 
+local function ApplyInfLanternOil(CharacterName)
+	local CharacterHuman = Characters[ModCharaId[CharacterName]].Human
+	if CharacterHuman == nil then
+		DebugLog("ApplyInfLanternOil Human is nil for Characters[ModCharaId["..CharacterName.."]] !")
+		return false
+	end
+	local LanternParam = Characters[ModCharaId[CharacterName]].Human:get_Param():get_Action():get_LanternParamProp()
+	local CurrentConsumeOilSecSpeed = LanternParam:get_field("ConsumeOilSecSpeed")
+
+	if CurrentConsumeOilSecSpeed == nil then
+		DebugLog("ApplyInfLanternOil CurrentConsumeOilSecSpeed is nil for Characters[ModCharaId["..CharacterName.."]] !")
+		return false
+	elseif CurrentConsumeOilSecSpeed ~= 0 and RoundNumber(CurrentConsumeOilSecSpeed, 3 ) ~= RoundNumber(Mod.Variable.DefaultConsumeOilSecSpeed, 3) then
+		Mod.Variable.BackupConsumeOilSecSpeed = RoundNumber(CurrentConsumeOilSecSpeed, 3 )
+		DebugLog("ApplyInfLanternOil BackupConsumeOilSecSpeed : "..tostring(CurrentConsumeOilSecSpeed))
+	end
+
+	local NewConsumeOilSecSpeed = Mod.Variable.DefaultConsumeOilSecSpeed
+
+	if Mod.Cfg.InfLanternOil == true then
+		 NewConsumeOilSecSpeed = 0
+	elseif Mod.Variable.BackupConsumeOilSecSpeed ~= nil then
+		NewConsumeOilSecSpeed = Mod.Variable.BackupConsumeOilSecSpeed
+	end
+
+	if CurrentConsumeOilSecSpeed == NewConsumeOilSecSpeed then
+		DebugLog("ApplyInfLanternOil ConsumeOilSecSpeed is already "..tostring(CurrentConsumeOilSecSpeed).." for Characters[ModCharaId["..CharacterName.."]], skipping !")
+	else
+		LanternParam:set_field("ConsumeOilSecSpeed", NewConsumeOilSecSpeed)
+		DebugLog("ApplyInfLanternOil called (set to "..tostring(NewConsumeOilSecSpeed)..") for Characters[ModCharaId["..CharacterName.."]] !")
+	end
+
+	return true
+end
+
 local function PopulateCharacters(NameOrIndex)
 	local NewIndex = nil
 	if type(NameOrIndex) == "string" then
@@ -560,19 +570,20 @@ local function PopulateCharacters(NameOrIndex)
 		return false
 	end
 
-	if Characters[NewIndex].PawnID == nil then	
-		ExtractComponentToCharacters(NameOrIndex, "app.Character")
+	ExtractComponentToCharacters(NameOrIndex, "app.Character")
 
-		if ExtractComponentToCharacters(NameOrIndex, "app.Human") then
-			if UpdateLanternController(NameOrIndex) then
-				HookLanternControllerConsumeOil(NameOrIndex)
+	if ExtractComponentToCharacters(NameOrIndex, "app.Human") then
+		if UpdateLanternController(NameOrIndex) then
+			if Characters[NewIndex].PawnID == nil then
+				ApplyInfLanternOil(ModCharaId[NewIndex])
 			end
 		end
 	end
 	
+	
 	local LanternTransform = GetChildsFromTransform(Characters[NewIndex].GameObject:get_Transform(), "lantern_000")
 	if LanternTransform ~= nil then
-		Characters[NewIndex].LanternGameObject = LanternTransform:get_GameObject()
+		Characters[NewIndex].LanternMesh = LanternTransform:get_GameObject():call("getComponent(System.Type)", sdk.typeof("via.render.Mesh"))
 	end
 
 	ExtractComponentToCharacters(NameOrIndex, "via.render.Mesh")
@@ -592,15 +603,16 @@ local function PopulateCharacters(NameOrIndex)
 end
 
 local function UpdateLantern(CharacterName)
-	local LanternGameObj = Characters[ModCharaId[CharacterName]].LanternGameObject
-	local ShouldDrawLantern = 0x1
-	if Mod.Presets[CharacterName].HideLantern == true then ShouldDrawLantern = 0x0 end
-	if LanternGameObj ~= nil then
-		LanternGameObj:write_byte(0x10, ShouldDrawLantern)
-		LanternGameObj:write_byte(0x11, ShouldDrawLantern)
-		LanternGameObj:set_UpdateSelf(ShouldDrawLantern)
-		DebugLog("UpdateLantern called for Characters[ModCharaId["..CharacterName.."]] !")
+	local LanternMesh = Characters[ModCharaId[CharacterName]].LanternMesh
+	if LanternMesh == nil then
+		DebugLog("UpdateLantern LanternMesh is nil for Characters[ModCharaId["..CharacterName.."]] !")
+		return false
 	end
+	local ShouldDrawLantern = true
+	if Mod.Presets[CharacterName].HideLantern == true or not Characters[ModCharaId[CharacterName]].LanternController:hasLantern() then ShouldDrawLantern = false end
+	LanternMesh:set_DrawDefault(ShouldDrawLantern)
+	DebugLog("UpdateLantern called for Characters[ModCharaId["..CharacterName.."]] !")
+	return true
 end
 
 local function ForceUpdate(CharacterName)
@@ -608,6 +620,13 @@ local function ForceUpdate(CharacterName)
 		Characters[ModCharaId[CharacterName]].PartSwapper:forceUpdateStatusOfSwapObjects()
 		DebugLog("ForceUpdate called for Characters[ModCharaId["..CharacterName.."]] !")
 	end
+end
+
+local function ForceUpdateAll()
+	for Name, value in pairs(Mod.Presets) do
+		ForceUpdate(Name)
+	end
+	DebugLog("ForceUpdateAll done!")
 end
 
 local function UpdateHideSwapObjects(CharacterName)
@@ -736,6 +755,28 @@ local function SetupPawns()
 	return true
 end
 
+local function AddOnTickCounter(Name, Second, Functions)
+	if Name == nil or Second == nil or Functions == nil then
+		DebugLog("AddToOnTickCounterZero missing param, aborting !")
+		return false
+	end
+
+	local FunctionsTable = {}
+	if type(Functions) == "table" then
+		FunctionsTable = Functions
+	else
+		table.insert(FunctionsTable, Functions)
+	end
+
+	if OnTickCounterZero[Name] == nil then
+		OnTickCounterZero[Name] = { TargetTime = os.clock() + tonumber(Second), FuncTable = FunctionsTable }
+	else
+		DebugLog("AddToOnTickCounterZero there is already a "..Name.." in the queu, aborting !")
+		return false
+	end
+	return true
+end
+
 local function Setup()
 	if ManagedSingleton.CharacterManager == nil then UpdateAppSingleton("CharacterManager") end
 	if ManagedSingleton.BattleManager == nil then UpdateAppSingleton("BattleManager") end
@@ -745,53 +786,68 @@ local function Setup()
 		return false
 	end
 
-	DoSetupPawns = true
-	
+	AddOnTickCounter("DoSetupPawns", 2.0, { [1] = SetupPawns, [2] = ForceUpdateAll })
+
 	return true
+end
+
+local function ApplyAllInfLanternOil()
+	for key, value in pairs(Characters) do
+		if value.Human ~= nil and value.PawnID == nil then
+			ApplyInfLanternOil(ModCharaId[key])
+		end
+	end
+	DebugLog("ApplyAllInfLanternOil done!")
 end
 
 local function UpdateAllLantern()
 	for key, value in pairs(Characters) do
-		if value.LanternGameObject ~= nil then
+		if value.LanternMesh ~= nil then
 			UpdateLantern(ModCharaId[key])
 		end
 	end
 	DebugLog("UpdateAllLantern done!")
 end
 
-local function ForceUpdateAll()
-	for Name, value in pairs(Mod.Presets) do
-		ForceUpdate(Name)
-	end
-	DebugLog("ForceUpdateAll done!")
+local function SetupLantern()
+	UpdateAllLantern()
+	ApplyAllInfLanternOil()
 end
+
 
 re.on_pre_application_entry("UpdateBehavior", function()
 	if Characters[ModCharaId.Arisen].GameObject == nil then
 		if TickCounter == 0 then
 			Setup()
 		end
+		if TickCounter > Mod.Variable.TicksToWait then
+			TickCounter = 0
+		else
+			TickCounter = TickCounter + 1
+		end
 	else
-		if TickCounter == 0 then
-			if DoUpdateAllLantern == true then
-				DoUpdateAllLantern = false
-				UpdateAllLantern()
+		local DoChecks = false
+		for key, value in pairs(OnTickCounterZero) do
+			DoChecks = true
+			break
+		end
+		if DoChecks == true then
+			if TickCounter == 0 then
+				for key, value in pairs(OnTickCounterZero) do
+					if value.TargetTime <= os.clock() then
+						for index, func in ipairs(value.FuncTable) do
+							func()
+						end
+						OnTickCounterZero[key] = nil
+					end
+				end
 			end
-			if DoForceUpdateAll == true then
-				DoForceUpdateAll = false
-				ForceUpdateAll()
-			end
-			if DoSetupPawns == true then
-				DoSetupPawns = false
-				SetupPawns()
-				DoForceUpdateAll = true
+			if TickCounter > Mod.Variable.TicksToWait then
+				TickCounter = 0
+			else
+				TickCounter = TickCounter + 1
 			end
 		end
-	end
-	if TickCounter > Mod.Variable.TicksToWait then
-		TickCounter = 0
-	else
-		TickCounter = TickCounter + 1
 	end
 end)
 
@@ -806,7 +862,7 @@ sdk.hook(
     function(args)
     end,
     function(retval)
-		DoSetupPawns = true
+		AddOnTickCounter("DoSetupPawns", 2.0, { [1] = SetupPawns, [2] = ForceUpdateAll })
 		return retval
 	end
 )
@@ -816,7 +872,7 @@ sdk.hook(
     function(args)
     end,
     function(retval)
-		DoSetupPawns = true
+		AddOnTickCounter("DoSetupPawns", 2.0, { [1] = SetupPawns, [2] = ForceUpdateAll })
 		return retval
 	end
 )
@@ -872,7 +928,7 @@ sdk.hook(
 	sdk.find_type_definition("app.TurnLantern"):get_method("execTurn"),
 	function(args) end,
 	function(retval)
-			DoUpdateAllLantern = true
+		AddOnTickCounter("DoSetupLantern", 2.0, SetupLantern)
 		return retval
 	end
 )
@@ -922,6 +978,9 @@ re.on_frame(function()
 				imgui.text("Lantern Oil ")
 				imgui.same_line()
 				CfgChanged["InfLanternOil"], Mod.Cfg.InfLanternOil = imgui.checkbox("##InfLanternOil", Mod.Cfg.InfLanternOil)
+				if CfgChanged["InfLanternOil"] == true then
+					ApplyAllInfLanternOil()
+				end
 				imgui.text("Stamina ")
 				imgui.same_line()
 				CfgChanged["InfStamina"], Mod.Cfg.InfStamina = imgui.combo("##InfStamina", Mod.Cfg.InfStamina, { "Off", "OutOfBattle", "Always" })
