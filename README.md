@@ -14,9 +14,12 @@ Feature:
 - Infinite NPC Carry Time
   - Choose between [On], On but [StillResist] or [Off]
 - Character
-  - Allows you to select which parts of the armor to visually hide
+  - Select which parts of the armor to visually hide
+  - Hide Lantern
+  - Tweak or Disable DragonGrade Opacity (A.k.a Dragonforged Effect or Wyrmfire Upgrade)
 
 support me on Ko-fi : https://ko-fi.com/ekibunnel
 
-![image](https://github.com/Ekibunnel/DD2-EkiToolsBox/assets/7073622/e1c548a2-1df0-4829-aeb2-7a28c12d3124)
+![image](https://github.com/Ekibunnel/DD2-EkiToolsBox/assets/7073622/0299af2d-f501-4eae-bd9f-c3384231b185)
+
 
