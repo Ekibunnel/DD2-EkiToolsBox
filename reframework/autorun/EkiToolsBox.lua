@@ -1,7 +1,7 @@
 local Mod = {
 	Info = {
 		Name = "EkiToolsBox",
-		Version = "0.4.4",
+		Version = "0.5.0",
 		Contributors = "Ekibunnel",
 		Source = "https://github.com/Ekibunnel/DD2-EkiToolsBox"
 	},
@@ -9,16 +9,19 @@ local Mod = {
 		Debug = false,
 		DrawWindow = nil,
 		IgnoreReframeworkDrawUI = false,
+		IgnoreCleanup = false,
 		InfStamina = 1,
 		InfLanternOil = false,
-		InfCarryTime = 1
+		InfCarryTime = 1,
+		FroceHideSwapInSpa = false
 	},
-	Variable = {
-		TicksToWait = 70,
+	Constant = {
+		TicksToWait = 40,
 		DefaultFurMaskMapHand = 0.05,
 		DefaultConsumeOilSecSpeed = 0.0125,
-		BackupConsumeOilSecSpeed = nil
+		DefaultDragonGradeOpacity = 0.650
 	},
+	Variable = {},
 	Presets = {}
 }
 
@@ -209,20 +212,24 @@ local Characters = {
 		PawnID = nil,
 		GameObject = nil,
 		Mesh = nil,
+		WeaponMesh = nil,
+		PartSwapMesh = nil,
 		Human = nil,
 		LanternController = nil,
 		LanternMesh = nil,
 		Character = nil,
 		HideSwapObjects = nil,
+		BackupHideSwapObjects = nil,
 		CaughtController = nil,
 		PartSwapper = nil,
 		PartSwapItem = {}
 	}
 }
 
-local ManagedSingleton = { CharacterManager = nil, BattleManager = nil, PawnManager = nil }
+local ManagedSingleton = { CharacterManager = nil, BattleManager = nil, PawnManager = nil, SpaManager = nil }
 
 local TickCounter = 0
+
 local OnTickCounterZero = {
 	DoSetupPawns = nil,
 	DoForceUpdateAll = nil,
@@ -240,6 +247,10 @@ function HookCharacterOnDestroy(NameOrIndex)
 	else
 		NewIndex = NameOrIndex
 	end
+	if Characters[NewIndex] == nil then
+		DebugLog("HookCharacterOnDestroy Characters["..ModCharaId[NewIndex].."] is nil, aborting!")
+		return false
+	end
 	if Characters[NewIndex].Character == nil then
 		DebugLog("HookCharacterOnDestroy Character is null, aborting!")
 		return false
@@ -248,8 +259,10 @@ function HookCharacterOnDestroy(NameOrIndex)
 		Characters[NewIndex].Character, Characters[NewIndex].Character:get_type_definition():get_method("onDestroy"),
 		function(args) end,
 		function(retval)
-			Characters[NewIndex].GameObject = nil --This will recall Setup and clean the whole Characters Table
-			DebugLog("Characters["..NewIndex.."] onDestroy called !")
+			if Characters[NewIndex] ~= nil then
+				Characters[NewIndex].GameObject = nil -- This will recall Setup and then clean the whole Characters Table if Arisen
+				DebugLog("Characters["..NewIndex.."] onDestroy called !")
+			end
 			return retval
 		end
 	)
@@ -257,33 +270,18 @@ function HookCharacterOnDestroy(NameOrIndex)
 	return true
 end
 
-local function HookPartSwapperHideSwapObjects(NameOrIndex)
-	local NewIndex = nil
-	if type(NameOrIndex) == "string" then
-		NewIndex = ModCharaId[NameOrIndex]
-	else
-		NewIndex = NameOrIndex
+-- Functions
+
+local function InitModVariable()
+	Mod.Variable = {
+		BackupConsumeOilSecSpeed = nil,
+		IsSpaMode = false
+	}
+	if ManagedSingleton.SpaManager ~= nil then
+		Mod.Variable.IsSpaMode = ManagedSingleton.SpaManager:get_IsActiveSpa()
 	end
-	if Characters[NewIndex].PartSwapper == nil then
-		DebugLog("HookPartSwapperHideSwapObjects PartSwapper is null, aborting!")
-		return false
-	end
-	sdk.hook_vtable(
-		Characters[NewIndex].PartSwapper, Characters[NewIndex].PartSwapper:get_type_definition():get_method("get_HideSwapObjects"),
-		function(args) end,
-		function(retval)
-			if Characters[NewIndex].HideSwapObjects ~= nil then
-				--DebugLog("HookPartSwapperHideSwapObjects PartSwapper get_HideSwapObjects for "..ModCharaId[NewIndex].." spoofed!") --spam
-				return sdk.to_ptr(Characters[NewIndex].HideSwapObjects)
-			end
-			return retval
-		end
-	)
-	DebugLog("HookPartSwapperHideSwapObjects PartSwapper get_HideSwapObjects is hooked for Characters["..ModCharaId[NewIndex].."] !")
-	return true
 end
 
--- Functions
 
 local function InitCharactersTable(Name, Index)
 	if Name == nil then
@@ -314,11 +312,14 @@ local function InitCharactersTable(Name, Index)
 		PawnID = nil,
 		GameObject = nil,
 		Mesh = nil,
+		WeaponMesh = nil,
+		PartSwapMesh = nil,
 		Human = nil,
 		LanternController = nil,
 		LanternMesh = nil,
 		Character = nil,
 		HideSwapObjects = nil,
+		BackupHideSwapObjects = nil,
 		CaughtController = nil,
 		PartSwapper = nil,
 		PartSwapItem = {}
@@ -341,7 +342,8 @@ end
 
 local function InitPreset(Name)
 	local DefaultPreset = {
-		Fur_MaskMap_Hand = Mod.Variable.DefaultFurMaskMapHand,
+		Fur_MaskMap_Hand = -1,
+		DragonGrade_Opacity = -1,
 		HideLantern = false,
 		SwapObjectsToHide = InitTableFromEnum(ExtractedEnums.SwapObjects)
 	}
@@ -360,7 +362,9 @@ local function LoadFromSavedPresets(NameOrIndex)
 		NewName = ModCharaId[NameOrIndex]
 	end
 
-	if Mod.Presets[NewName] == nil then InitPreset(NewName) end
+	Mod.Presets[NewName] = nil
+	InitPreset(NewName)
+
 	if LoadPreset(NewName, Characters[ModCharaId[NewName]].Meta) then
 		return true
 	end
@@ -436,6 +440,10 @@ local function ExtractComponentToCharacters(NameOrIndex, NameOfType)
 	else
 		NewIndex = NameOrIndex
 	end
+	if Characters[NewIndex] == nil then
+		DebugLog("UpdateCharactersComponent Characters["..NewIndex.."] is nil, aborting !")
+		return false
+	end
 	if Characters[NewIndex].GameObject == nil then
 		DebugLog("UpdateCharactersComponent Characters["..NewIndex.."] GameObject is nil, aborting !")
 		return false
@@ -458,8 +466,13 @@ local function UpdateLanternController(NameOrIndex)
 	else
 		NewIndex = NameOrIndex
 	end
+	if Characters[NewIndex] == nil then
+		DebugLog("UpdateLanternController Characters["..NewIndex.."] is nil, aborting ! ")
+		return false
+	end
 	if Characters[NewIndex].Human == nil then
 		DebugLog("UpdateLanternController Human is nil, aborting ! ")
+		return false
 	end
 	local LanterController = Characters[NewIndex].Human:get_LanternCtrl()
 	if LanterController ~= nil then
@@ -470,6 +483,91 @@ local function UpdateLanternController(NameOrIndex)
 	return false
 end
 
+local function UpdateMesh(NameOrIndex)
+	local NewIndex = nil
+	if type(NameOrIndex) == "string" then
+		NewIndex = ModCharaId[NameOrIndex]
+	else
+		NewIndex = NameOrIndex
+	end
+	if Characters[NewIndex] == nil then
+		DebugLog("UpdateMesh Characters["..NewIndex.."] is nil, aborting ! ")
+		return false
+	end
+	if Characters[NewIndex].GameObject == nil then
+		DebugLog("UpdateMesh GameObject is nil, aborting ! ")
+		return false
+	end
+
+	local CharacterTransform = Characters[NewIndex].GameObject:get_Transform()
+	local CharacterTransformChilds = GetChildsFromTransform(CharacterTransform)
+
+	Characters[NewIndex].WeaponMesh = {}
+	Characters[NewIndex].PartSwapMesh = {}
+
+	for key, value in pairs(CharacterTransformChilds) do
+		local ValueGameObj = value:get_GameObject()
+		local ValueGameObjName = ValueGameObj:get_Name()
+		local ValueFolder = ValueGameObj:get_FolderSelf()
+		local ValueFolderName = nil
+		if ValueFolder then
+			ValueFolderName = ValueFolder:get_Name()
+		end
+		if ValueFolderName == "Equipment" then
+			if ValueGameObj:call("getComponent(System.Type)", sdk.typeof("app.Weapon")) ~= nil then
+				Characters[NewIndex].WeaponMesh[ValueGameObjName] = ValueGameObj:call("getComponent(System.Type)", sdk.typeof("via.render.Mesh"))
+			end
+		elseif ValueFolderName == "PartSwap" then
+			Characters[NewIndex].PartSwapMesh[ValueGameObjName] = ValueGameObj:call("getComponent(System.Type)", sdk.typeof("via.render.Mesh"))
+		end
+		-- DebugLog("CharacterTransformChilds['"..tostring(key).."'] : GameObj name : "..tostring(ValueGameObjName).." | FolderSelf name : "..tostring(ValueFolderName))
+	end
+	DebugLog("UpdateMesh done !")
+	return true
+end
+
+local function UpdateMaterialFloat(Mesh, MaterialName, VariableName, VariableValue)
+	if Mesh == nil  or VariableName == nil or VariableValue == nil then
+		DebugLog("UpdateMaterialFloat At least one of the non-nil Arg is nil, aborting !")
+		return false
+	end
+
+	local MaterialIndexTable = {}
+
+	if MaterialName ~= nil then
+		local MaterialNames = Mesh:get_MaterialNames()
+		--DebugLog("UpdateMaterial MaterialNames : "..tostring(MaterialNames))
+		local IndexOfBodyMat = MaterialNames:IndexOf(MaterialName)
+		--DebugLog("UpdateMaterial IndexOfBodyMat from "..MaterialName.." : "..tostring(IndexOfBodyMat))
+		if IndexOfBodyMat < 0 then
+			DebugLog("UpdateMaterialFloat IndexOfBodyMat is "..tostring(IndexOfBodyMat).." for "..tostring(MaterialName)..", aborting !")
+			return false
+		end
+		table.insert(MaterialIndexTable, IndexOfBodyMat)
+	else
+		local MaterialNum = Mesh:call("get_MaterialNum")
+		for i = 0, MaterialNum - 1 do
+			table.insert(MaterialIndexTable, i)
+		end
+	end
+
+	for index, value in ipairs(MaterialIndexTable) do
+		local MaterialVariableNum = Mesh:getMaterialVariableNum(value)
+		for i = 0, MaterialVariableNum - 1 do
+			local MaterialVariableName = Mesh:getMaterialVariableName(value, i)
+			--DebugLog("UpdateMaterial MaterialVariableName : "..tostring(MaterialVariableName))
+			if MaterialVariableName ~= nil then
+				if MaterialVariableName == VariableName then
+					Mesh:setMaterialFloat(value, i, VariableValue)
+					--DebugLog("UpdateMaterialFloat Material index "..tostring(value).." : "..VariableName.." set to "..tostring(VariableValue).." for Mesh @"..Mesh:get_address().." !")
+				end
+			end
+		end
+	end
+
+	return true
+end
+
 local function UpdateMaterialFurMaskHand(NameOrIndex, Value)
 	local NewIndex = nil
 	if type(NameOrIndex) == "string" then
@@ -477,36 +575,95 @@ local function UpdateMaterialFurMaskHand(NameOrIndex, Value)
 	else
 		NewIndex = NameOrIndex
 	end
-	if Characters[NewIndex].Mesh == nil then
-		DebugLog("UpdateMaterialFurMaskHand Mesh is nil, aborting !")
-	end
-	local MaterialNames = Characters[NewIndex].Mesh:get_MaterialNames()
-	--DebugLog("UpdateMaterialFurMaskHand MaterialNames : "..tostring(MaterialNames))
-	local IndexOfBodyMat = MaterialNames:IndexOf("body_mat")
-	--DebugLog("UpdateMaterialFurMaskHand IndexOfBodyMat : "..tostring(IndexOfBodyMat))
-	if IndexOfBodyMat < 0 then
-		DebugLog("UpdateMaterialFurMaskHand IndexOfBodyMat is "..tostring(IndexOfBodyMat)..", aborting !")
+	if Characters[NewIndex] == nil then
+		DebugLog("UpdateMaterialFurMaskHand Characters["..NewIndex.."] is nil, aborting ! ")
 		return false
 	end
-	local MaterialVariableNum = Characters[NewIndex].Mesh:getMaterialVariableNum(IndexOfBodyMat)
-	for i = 0, MaterialVariableNum - 1 do
-		local MaterialVariableName = Characters[NewIndex].Mesh:getMaterialVariableName(IndexOfBodyMat, i)
+	if Characters[NewIndex].Mesh == nil then
+		DebugLog("UpdateMaterialFurMaskHand Mesh is nil, aborting !")
+		return false
+	end
 
-		--DebugLog("UpdateMaterialFurMaskHand MaterialVariableName : "..tostring(MaterialVariableName))
+	local NewFurMaskMapHand = Mod.Constant.DefaultFurMaskMapHand
+	if Value ~= nil then
+		if Value >= 0 then
+			NewFurMaskMapHand = RoundNumber(Value)
+		else
+			NewFurMaskMapHand = 0.0
+		end
+	end
 
-		if MaterialVariableName ~= nil then
-			if MaterialVariableName == "Fur_MaskMap_Hand"then
-				local NewFurMaskMapHand = Mod.Variable.DefaultFurMaskMapHand
-				if Value ~= nil then NewFurMaskMapHand = RoundNumber(Value) end
-				Characters[NewIndex].Mesh:setMaterialFloat(IndexOfBodyMat, i, NewFurMaskMapHand)
-				Mod.Presets[ModCharaId[NewIndex]].Fur_MaskMap_Hand = NewFurMaskMapHand
-				DebugLog("UpdateMaterialFurMaskHand setMaterialFloat with body_mat Fur_MaskMap_Hand "..tostring(NewFurMaskMapHand).." for Characters["..ModCharaId[NewIndex].."]!")
-				return true
+	if UpdateMaterialFloat(Characters[NewIndex].Mesh, "body_mat", "Fur_MaskMap_Hand", NewFurMaskMapHand) == true then
+		if Value ~= nil and Value < 0 then
+			Mod.Presets[ModCharaId[NewIndex]].Fur_MaskMap_Hand = nil
+		else
+			Mod.Presets[ModCharaId[NewIndex]].Fur_MaskMap_Hand = NewFurMaskMapHand
+		end
+		return true
+	end
+
+	return false
+end
+
+local function UpdateMaterialDragonGradeOpacity(NameOrIndex, Value)
+	local NewIndex = nil
+	if type(NameOrIndex) == "string" then
+		NewIndex = ModCharaId[NameOrIndex]
+	else
+		NewIndex = NameOrIndex
+	end
+	if Characters[NewIndex] == nil then
+		DebugLog("UpdateMaterialDragonGradeOpacity Characters["..ModCharaId[NewIndex].."] is nil, aborting ! ")
+		return false
+	end
+	if Characters[NewIndex].WeaponMesh == nil and Characters[NewIndex].PartSwapMesh == nil then
+		DebugLog("UpdateMaterialDragonGradeOpacity Mesh are nil, aborting !")
+		return false
+	end
+
+	local UpdatedMeshCount = 0
+	local NewDragonGradeOpacity = Mod.Constant.DefaultDragonGradeOpacity
+
+	if Value ~= nil then
+		if Value >= 0 then
+			NewDragonGradeOpacity = RoundNumber(Value)
+		end
+		for key, value in pairs(Characters[NewIndex].WeaponMesh) do
+			if UpdateMaterialFloat(value, nil, "DragonGrade_Opacity", NewDragonGradeOpacity) == true then
+				UpdatedMeshCount = UpdatedMeshCount + 1
+			end
+		end
+
+		for key, value in pairs(Characters[NewIndex].PartSwapMesh) do
+			if UpdateMaterialFloat(value, nil, "DragonGrade_Opacity", NewDragonGradeOpacity) == true then
+				UpdatedMeshCount = UpdatedMeshCount + 1
 			end
 		end
 	end
-	DebugLog("UpdateMaterialFurMaskHand could not found and set body_mat Fur_MaskMap_Hand")
+
+	if Value ~= nil and Value < 0 then
+		Mod.Presets[ModCharaId[NewIndex]].DragonGrade_Opacity = nil
+		return true
+	elseif UpdatedMeshCount > 0 then
+		Mod.Presets[ModCharaId[NewIndex]].DragonGrade_Opacity = NewDragonGradeOpacity
+		DebugLog("UpdateMaterialDragonGradeOpacity (value:"..tostring(Value)..") Updated "..tostring(UpdatedMeshCount).." Mesh !")
+		return true
+	end
+
+	DebugLog("UpdateMaterialDragonGradeOpacity NO Mesh updated !")
 	return false
+end
+
+local function UpdateMeshFromWeapon(Weapon)
+	local WeaponParentGameObj = Weapon:get_GameObject():get_Transform():get_Parent():get_GameObject()
+	-- DebugLog("UpdateMeshFromWeapon call from "..WeaponParentGameObj:get_Name().." !")
+	for index, value in ipairs(Characters) do
+		if value.GameObject == WeaponParentGameObj then
+			UpdateMesh(index)
+			UpdateMaterialDragonGradeOpacity(index, Mod.Presets[value.Name].DragonGrade_Opacity)
+			break
+		end
+	end
 end
 
 local function InitPawnsModCharaId()
@@ -535,12 +692,12 @@ local function ApplyInfLanternOil(CharacterName)
 	if CurrentConsumeOilSecSpeed == nil then
 		DebugLog("ApplyInfLanternOil CurrentConsumeOilSecSpeed is nil for Characters[ModCharaId["..CharacterName.."]] !")
 		return false
-	elseif CurrentConsumeOilSecSpeed ~= 0 and RoundNumber(CurrentConsumeOilSecSpeed, 3 ) ~= RoundNumber(Mod.Variable.DefaultConsumeOilSecSpeed, 3) then
+	elseif CurrentConsumeOilSecSpeed ~= 0 and RoundNumber(CurrentConsumeOilSecSpeed, 3 ) ~= RoundNumber(Mod.Constant.DefaultConsumeOilSecSpeed, 3) then
 		Mod.Variable.BackupConsumeOilSecSpeed = RoundNumber(CurrentConsumeOilSecSpeed, 3 )
 		DebugLog("ApplyInfLanternOil BackupConsumeOilSecSpeed : "..tostring(CurrentConsumeOilSecSpeed))
 	end
 
-	local NewConsumeOilSecSpeed = Mod.Variable.DefaultConsumeOilSecSpeed
+	local NewConsumeOilSecSpeed = Mod.Constant.DefaultConsumeOilSecSpeed
 
 	if Mod.Cfg.InfLanternOil == true then
 		 NewConsumeOilSecSpeed = 0
@@ -565,6 +722,10 @@ local function PopulateCharacters(NameOrIndex)
 	else
 		NewIndex = NameOrIndex
 	end
+	if Characters[NewIndex] == nil then
+		DebugLog("PopulateCharacters Characters["..NewIndex.."] is nil, aborting !")
+		return false
+	end
 	if Characters[NewIndex].GameObject == nil then
 		DebugLog("PopulateCharacters Characters["..NewIndex.."] GameObject is nil, aborting !")
 		return false
@@ -585,11 +746,14 @@ local function PopulateCharacters(NameOrIndex)
 	if LanternTransform ~= nil then
 		Characters[NewIndex].LanternMesh = LanternTransform:get_GameObject():call("getComponent(System.Type)", sdk.typeof("via.render.Mesh"))
 	end
-
+	
 	ExtractComponentToCharacters(NameOrIndex, "via.render.Mesh")
 
+	UpdateMesh(NameOrIndex)
+
 	if ExtractComponentToCharacters(NameOrIndex, "app.PartSwapper") then
-		HookPartSwapperHideSwapObjects(NameOrIndex)
+		Characters[NewIndex].BackupHideSwapObjects = Characters[NewIndex].PartSwapper._HideSwapObjects
+		--HookPartSwapperHideSwapObjects(NameOrIndex)
 		local PawnDataContext = nil
 		if Characters[NewIndex].PawnID ~= nil  then
 			PawnDataContext = Characters[NewIndex].PartSwapper._PawnDataContext
@@ -616,15 +780,34 @@ local function UpdateLantern(CharacterName)
 end
 
 local function ForceUpdate(CharacterName)
+	if Mod.Cfg.FroceHideSwapInSpa == false and Mod.Variable.IsSpaMode == true then
+		DebugLog("ForceUpdate skipped, IsSpaMode is ON !")
+		return false
+	end
 	if Characters[ModCharaId[CharacterName]].PartSwapper ~= nil then
-		Characters[ModCharaId[CharacterName]].PartSwapper:forceUpdateStatusOfSwapObjects()
+		local NewHideSwapObjects = 0
+		if Characters[ModCharaId[CharacterName]].HideSwapObjects ~= nil then
+			NewHideSwapObjects = Characters[ModCharaId[CharacterName]].HideSwapObjects
+		end
+		local status, Error = pcall(function ()
+			Characters[ModCharaId[CharacterName]].PartSwapper:set_HideSwapObjects(NewHideSwapObjects)
+			Characters[ModCharaId[CharacterName]].PartSwapper:call("forceUpdateStatusOfSwapObjects")
+		end)
+		if not status then
+			DebugLog("ForceUpdate failled, status :"..tostring(status).." | error : "..type(Error).." : "..tostring(Error))
+			return false
+		end
+
 		DebugLog("ForceUpdate called for Characters[ModCharaId["..CharacterName.."]] !")
+		return true
 	end
 end
 
 local function ForceUpdateAll()
-	for Name, value in pairs(Mod.Presets) do
-		ForceUpdate(Name)
+	for index, value in pairs(Characters) do
+		if value.PartSwapper ~= nil then
+			ForceUpdate(value.Name)
+		end
 	end
 	DebugLog("ForceUpdateAll done!")
 end
@@ -667,15 +850,47 @@ local function ApplyPreset(Name)
 		return false
 	end
 
-	UpdateMaterialFurMaskHand(Name, Mod.Presets[Name].Fur_MaskMap_Hand)
-	
-	UpdateHideSwapObjects(Name)
+
+	if Mod.Presets[Name].DragonGrade_Opacity ~= nil then
+		UpdateMaterialDragonGradeOpacity(Name, Mod.Presets[Name].DragonGrade_Opacity)
+	end
+
+
+	if UpdateHideSwapObjects(Name) ~= nil then
+		if Mod.Presets[Name].Fur_MaskMap_Hand ~= nil and Mod.Presets[Name].Fur_MaskMap_Hand >= 0 then
+			UpdateMaterialFurMaskHand(Name, Mod.Presets[Name].Fur_MaskMap_Hand)
+		else
+			UpdateMaterialFurMaskHand(Name, Mod.Constant.DefaultFurMaskMapHand)
+		end
+	elseif Mod.Presets[Name].Fur_MaskMap_Hand ~= nil then
+		UpdateMaterialFurMaskHand(Name, Mod.Presets[Name].Fur_MaskMap_Hand)
+	end
 
 	ForceUpdate(Name)
 
 	UpdateLantern(Name)
 
 	return true
+end
+
+local function LoadAllPresets(Apply)
+	local DoApply = true
+	if Apply ~= nil then DoApply = Apply end
+
+	for Name, value in pairs(Mod.Presets) do
+		LoadFromSavedPresets(Name)
+		if DoApply == true then ApplyPreset(Name) end
+	end
+end
+
+local function SaveAllPresets(Apply)
+	local DoApply = true
+	if Apply ~= nil then DoApply = Apply end
+
+	for Name, value in pairs(Mod.Presets) do
+		if DoApply == true then ApplyPreset(Name) end
+		SaveCurrentPreset(Name)
+	end
 end
 
 local function SetupArisen()
@@ -707,6 +922,13 @@ local function SetupPawns()
 
 	InitPawnsModCharaId()
 
+	for k, v in pairs(ExtractedEnums.PawnID) do
+		if (v[1] ~= "None" and v[1] ~= "Max") and v[2] >= 0 then
+			Characters[ModCharaId[v[1]]] = nil
+			Mod.Presets[v[1]] = nil
+		end
+	end
+
 	local PawnSetup = 0
 	local AllPartyPawn = ManagedSingleton.PawnManager:getAllPartyPawn():ToArray()--:get_elements()
 	--DebugLog("ManagedSingleton.PawnManager:getAllPartyPawn() AllPartyPawn : "..tostring(AllPartyPawn))
@@ -724,7 +946,6 @@ local function SetupPawns()
 			--DebugLog("SetupPawns PawnIDName i : "..tostring(i).." | v[1] : "..tostring(v[1]).." | v[2] : "..tostring(v[2]))
 			if v[2] == PawnID then
 				PawnIDName = v[1]
-				break
 			end
 		end
 
@@ -755,7 +976,7 @@ local function SetupPawns()
 	return true
 end
 
-local function AddOnTickCounter(Name, Second, Functions)
+local function AddOnTickCounter(Name, Second, Functions, Force)
 	if Name == nil or Second == nil or Functions == nil then
 		DebugLog("AddToOnTickCounterZero missing param, aborting !")
 		return false
@@ -768,7 +989,7 @@ local function AddOnTickCounter(Name, Second, Functions)
 		table.insert(FunctionsTable, Functions)
 	end
 
-	if OnTickCounterZero[Name] == nil then
+	if OnTickCounterZero[Name] == nil or Force == true then
 		OnTickCounterZero[Name] = { TargetTime = os.clock() + tonumber(Second), FuncTable = FunctionsTable }
 	else
 		DebugLog("AddToOnTickCounterZero there is already a "..Name.." in the queu, aborting !")
@@ -781,12 +1002,16 @@ local function Setup()
 	if ManagedSingleton.CharacterManager == nil then UpdateAppSingleton("CharacterManager") end
 	if ManagedSingleton.BattleManager == nil then UpdateAppSingleton("BattleManager") end
 	if ManagedSingleton.PawnManager == nil then UpdateAppSingleton("PawnManager") end
+	if ManagedSingleton.SpaManager == nil then UpdateAppSingleton("SpaManager") end
 
 	if not SetupArisen() then
 		return false
 	end
 
-	AddOnTickCounter("DoSetupPawns", 2.0, { [1] = SetupPawns, [2] = ForceUpdateAll })
+	InitModVariable()
+
+	AddOnTickCounter("DoSetupPawns", 1.0, SetupPawns)
+	AddOnTickCounter("DoForceUpdateAll", 2.0, ForceUpdateAll)
 
 	return true
 end
@@ -814,13 +1039,13 @@ local function SetupLantern()
 	ApplyAllInfLanternOil()
 end
 
-
 re.on_pre_application_entry("UpdateBehavior", function()
 	if Characters[ModCharaId.Arisen].GameObject == nil then
 		if TickCounter == 0 then
-			Setup()
-		end
-		if TickCounter > Mod.Variable.TicksToWait then
+			if not Setup() then
+				TickCounter = TickCounter + 1
+			end
+		elseif TickCounter > Mod.Constant.TicksToWait then
 			TickCounter = 0
 		else
 			TickCounter = TickCounter + 1
@@ -833,22 +1058,51 @@ re.on_pre_application_entry("UpdateBehavior", function()
 		end
 		if DoChecks == true then
 			if TickCounter == 0 then
+				local OnTickCounterZeroKeyNum = 0
 				for key, value in pairs(OnTickCounterZero) do
+					OnTickCounterZeroKeyNum = OnTickCounterZeroKeyNum + 1
 					if value.TargetTime <= os.clock() then
 						for index, func in ipairs(value.FuncTable) do
 							func()
 						end
 						OnTickCounterZero[key] = nil
+						OnTickCounterZeroKeyNum = OnTickCounterZeroKeyNum - 1
 					end
 				end
-			end
-			if TickCounter > Mod.Variable.TicksToWait then
+				if OnTickCounterZeroKeyNum > 0 then
+					TickCounter = TickCounter + 1
+				end
+			elseif TickCounter > Mod.Constant.TicksToWait then
 				TickCounter = 0
 			else
 				TickCounter = TickCounter + 1
 			end
 		end
 	end
+end)
+
+re.on_script_reset(function()
+	if Mod.Cfg.IgnoreCleanup == true then
+		DebugLog("on_script_reset called but IgnoreCleanup is true, ignoring cleanup!")
+		return true
+	end
+
+	DebugLog("--- on_script_reset called doing cleanup!")
+
+	for index, value in ipairs(Characters) do
+		InitPreset(value.Name)
+		UpdateLantern(value.Name)
+
+		--DebugLog("--- on_script_reset HideSwapObjects : "..tostring(Characters[index].BackupHideSwapObjects).." | BackupHideSwapObjects : "..tostring(Characters[index].BackupHideSwapObjects))
+		Characters[index].HideSwapObjects = Characters[index].BackupHideSwapObjects
+		ForceUpdate(value.Name)
+
+		UpdateMaterialDragonGradeOpacity(index, Mod.Constant.DefaultDragonGradeOpacity)
+		UpdateMaterialFurMaskHand(index, 0.0)
+	end
+
+	DebugLog("--- on_script_reset cleanup done!")
+	return true
 end)
 
 local function testfunction(arg)
@@ -862,7 +1116,8 @@ sdk.hook(
     function(args)
     end,
     function(retval)
-		AddOnTickCounter("DoSetupPawns", 2.0, { [1] = SetupPawns, [2] = ForceUpdateAll })
+		AddOnTickCounter("DoSetupPawns", 1.0, SetupPawns)
+		AddOnTickCounter("DoForceUpdateAll", 2.0, ForceUpdateAll)
 		return retval
 	end
 )
@@ -872,7 +1127,8 @@ sdk.hook(
     function(args)
     end,
     function(retval)
-		AddOnTickCounter("DoSetupPawns", 2.0, { [1] = SetupPawns, [2] = ForceUpdateAll })
+		AddOnTickCounter("DoSetupPawns", 1.0, SetupPawns)
+		AddOnTickCounter("DoForceUpdateAll", 2.0, ForceUpdateAll)
 		return retval
 	end
 )
@@ -933,6 +1189,91 @@ sdk.hook(
 	end
 )
 
+sdk.hook(
+	sdk.find_type_definition("app.Weapon"):get_method("setupReLibEPVStandardChild"),
+	function(args)
+		local Weapon = sdk.to_managed_object(args[2])
+		UpdateMeshFromWeapon(Weapon)
+	end,
+	function(retval) return retval end
+)
+
+sdk.hook(
+	sdk.find_type_definition("app.PartSwapper"):get_method("set_HideSwapObjects"),
+	function(args)
+		local CurrentPartSwapper = sdk.to_managed_object(args[2])
+		for index, value in ipairs(Characters) do
+			if value.PartSwapper == CurrentPartSwapper then
+				local CalledHideSwapObjects = (sdk.to_int64(args[3]) & 0xFFFF)
+
+				if value.HideSwapObjects ~= nil and CalledHideSwapObjects ~= value.HideSwapObjects then
+					if not sdk.is_managed_object(args[3]) == true then
+						Characters[index].BackupHideSwapObjects = CalledHideSwapObjects
+						DebugLog("set_HideSwapObjects CallHideSwapObjects "..value.Name.." : "..tostring(CalledHideSwapObjects))
+					end
+				end
+
+				if Mod.Cfg.FroceHideSwapInSpa == true or Mod.Variable.IsSpaMode == false then
+					if value.HideSwapObjects ~= nil then
+						CurrentPartSwapper:set_field("_HideSwapObjects", value.HideSwapObjects)
+					else
+						CurrentPartSwapper:set_field("_HideSwapObjects", 0)
+					end
+					CurrentPartSwapper:set_field("_UpdateStatusOfSwapObjects", true)
+					-- DebugLog("PartSwapper set_HideSwapObjects spoofed for "..tostring(value.Name).." !")
+					return sdk.PreHookResult.SKIP_ORIGINAL
+				end
+			end
+		end
+		-- DebugLog("PartSwapper set_HideSwapObjects is not from party !")
+	end,
+	function(retval) return sdk.to_ptr(0) end
+)
+
+sdk.hook(
+	sdk.find_type_definition("app.CharacterEditManager"):get_method("registerSwapRequest"),
+	function(args)
+		local CurrentPartSwapperRootCharacter = sdk.to_managed_object(args[3]):get_Character()
+		for index, value in ipairs(Characters) do
+			if value.Character == CurrentPartSwapperRootCharacter then
+				UpdateMesh(index)
+				local DragonGrade_Opacity = nil
+				if Mod.Presets[value.Name] ~= nil then
+					DragonGrade_Opacity = Mod.Presets[value.Name].DragonGrade_Opacity
+				end
+				UpdateMaterialDragonGradeOpacity(index, DragonGrade_Opacity)
+				DebugLog("CharacterEditManager registerSwapRequest Updated Mesh for "..value.Name.."  !")
+				break
+			end
+		end
+		--DebugLog("CharacterEditManager registerSwapRequest is not from party !")
+	end,
+	function(retval) return sdk.to_ptr(0) end
+)
+
+sdk.hook(
+	sdk.find_type_definition("app.SpaController"):get_method("onStart"),
+	function(args)
+		if sdk.to_managed_object(args[2]):get_Owner():get_GameObject() == Characters[ModCharaId.Arisen].GameObject then
+			DebugLog("SpaController onStart !")
+			Mod.Variable.IsSpaMode = true
+		end
+	end,
+	function(retval) return retval end
+)
+
+sdk.hook(
+	sdk.find_type_definition("app.SpaController"):get_method("onDispose"),
+	function(args)
+		if sdk.to_managed_object(args[2]):get_Owner():get_GameObject() == Characters[ModCharaId.Arisen].GameObject then
+			DebugLog("SpaController onDispose !")
+			Mod.Variable.IsSpaMode = false
+			ForceUpdateAll()
+		end
+	end,
+	function(retval) return retval end
+)
+
 ----- GUI
 
 local CfgChanged = {}
@@ -945,12 +1286,16 @@ local HeaderState = {
 	Infinite = true,
 	Characters = true,
 	CharactersArisen = true,
+	CharactersArisenOverwrite = true,
 	SwapObjectsToHideArisen = true,
 	CharactersMainPawn = true,
+	CharactersMainPawnOverwrite = true,
 	SwapObjectsToHideMainPawn = true,
 	CharactersSubPawn01 = false,
+	CharactersSubPawn01Overwrite = true,
 	SwapObjectsToHideSubPawn01 = true,
 	CharactersSubPawn02 = false,
+	CharactersSubPawn02Overwrite = true,
 	SwapObjectsToHideSubPawn02 = true
 }
 
@@ -1005,17 +1350,53 @@ re.on_frame(function()
 						HeaderState["Characters"..Character.Name] = imgui.collapsing_header(Character.Name..Character.Meta.NameAndNickString)
 						if HeaderState["Characters"..Character.Name] then
 							imgui.indent()
-							imgui.text("Desired Body Fur Mask Map : ")
-							imgui.same_line()
-							PresetChanged["Fur_MaskMap_Hand"..Character.Name], Mod.Presets[Character.Name].Fur_MaskMap_Hand = imgui.drag_float("##Fur_MaskMap_Hand"..Character.Name, Mod.Presets[Character.Name].Fur_MaskMap_Hand, 0.01, 0.0, 1.0)
-							if imgui.is_item_hovered() then
-								imgui.begin_tooltip()
-								imgui.set_tooltip("0.0 : is the default value and will make body part invisible\n0.05 : will show the body but hide the fur\n1.0 : Will show the body and the full fur no matter what, it create clipping issue between armor and fur")
-								imgui.end_tooltip()
-							end
 							imgui.text("Hide Lantern : ")
 							imgui.same_line()
 							PresetChanged["HideLantern"..Character.Name], Mod.Presets[Character.Name].HideLantern = imgui.checkbox("##HideLantern"..Character.Name, Mod.Presets[Character.Name].HideLantern)
+							imgui.set_next_item_open(HeaderState["Characters"..Character.Name.."Overwrite"])
+							HeaderState["Characters"..Character.Name.."Overwrite"] = imgui.collapsing_header("Overwrite")
+							if HeaderState["Characters"..Character.Name.."Overwrite"] then
+								imgui.text("Body Fur Mask Map")
+								imgui.same_line()
+								if Mod.Presets[Character.Name].Fur_MaskMap_Hand == -1 or Mod.Presets[Character.Name].Fur_MaskMap_Hand == nil then
+									imgui.text("(Off) : ")
+								else
+									imgui.text("(On) : ")
+								end
+								imgui.same_line()
+								PresetChanged["Fur_MaskMap_Hand"..Character.Name], IgnoredValues["Fur_MaskMap_Hand"..Character.Name] = imgui.drag_float("##Fur_MaskMap_Hand"..Character.Name, Mod.Presets[Character.Name].Fur_MaskMap_Hand, 0.01, 0.0, 1.0)
+								if imgui.is_item_hovered() then
+									if imgui.is_mouse_clicked(1) then
+										Mod.Presets[Character.Name].Fur_MaskMap_Hand = -1
+										PresetChanged["Fur_MaskMap_Hand"..Character.Name] = true
+									elseif PresetChanged["Fur_MaskMap_Hand"..Character.Name] == true then
+										Mod.Presets[Character.Name].Fur_MaskMap_Hand = IgnoredValues["Fur_MaskMap_Hand"..Character.Name]
+									end
+									imgui.begin_tooltip()
+									imgui.set_tooltip("0.0 : is the default value and will make body part invisible\n0.05 : will show the body but hide the fur\n1.0 : Will show the body and the full fur no matter what, it create clipping issue between armor and fur\n\nRight-Click to turn off the overwrite")
+									imgui.end_tooltip()
+								end
+								imgui.text("DragonGrade Opacity")
+								imgui.same_line()
+								if Mod.Presets[Character.Name].DragonGrade_Opacity == -1 or Mod.Presets[Character.Name].DragonGrade_Opacity == nil then
+									imgui.text("(Off) : ")
+								else
+									imgui.text("(On) : ")
+								end
+								imgui.same_line()
+								PresetChanged["DragonGrade_Opacity"..Character.Name], IgnoredValues["DragonGrade_Opacity"..Character.Name] = imgui.drag_float("##DragonGrade_Opacity"..Character.Name, Mod.Presets[Character.Name].DragonGrade_Opacity, 0.01, 0.0, 1.0)
+								if imgui.is_item_hovered() then
+									if imgui.is_mouse_clicked(1) then
+										Mod.Presets[Character.Name].DragonGrade_Opacity = -1
+										PresetChanged["DragonGrade_Opacity"..Character.Name] = true
+									elseif PresetChanged["DragonGrade_Opacity"..Character.Name] == true then
+										Mod.Presets[Character.Name].DragonGrade_Opacity = IgnoredValues["DragonGrade_Opacity"..Character.Name]
+									end
+									imgui.begin_tooltip()
+									imgui.set_tooltip("0.0 : disable the effect\n\nRight-Click to turn off the overwrite")
+									imgui.end_tooltip()
+								end
+							end
 							imgui.set_next_item_open(HeaderState["SwapObjectsToHide"..Character.Name])
 							HeaderState["SwapObjectsToHide"..Character.Name] = imgui.collapsing_header("Hide Parts")
 							if HeaderState["SwapObjectsToHide"..Character.Name] then
@@ -1068,22 +1449,30 @@ re.on_frame(function()
 			imgui.text("Presets :")
 			imgui.same_line()
 			if imgui.button("Load##LoadPreset") then
-				for Name, value in pairs(Mod.Presets) do
-					LoadFromSavedPresets(Name)
-					ApplyPreset(Name)
-				end
+				AddOnTickCounter("DoLoadAllPresets", 0.5, LoadAllPresets, true)
 			end
 			imgui.same_line()
 			if imgui.button("Save##SavePreset") then
-				for Name, value in pairs(Mod.Presets) do
-					ApplyPreset(Name)
-					SaveCurrentPreset(Name)
-				end
+				AddOnTickCounter("DoSaveAllPresets", 0.5, SaveAllPresets, true)
 			end
 			imgui.spacing()
 			imgui.text("IgnoreReframeworkDrawUI : ")
 			imgui.same_line()
 			CfgChanged["IgnoreReframeworkDrawUI"], Mod.Cfg.IgnoreReframeworkDrawUI = imgui.checkbox("##IgnoreReframeworkDrawUI", Mod.Cfg.IgnoreReframeworkDrawUI)
+			imgui.spacing()
+			imgui.text("IgnoreCleanup : ")
+			imgui.same_line()
+			CfgChanged["IgnoreCleanup"], Mod.Cfg.IgnoreCleanup = imgui.checkbox("##IgnoreCleanup", Mod.Cfg.IgnoreCleanup)
+			imgui.spacing()
+			imgui.text("FroceHideSwapInSpa : ")
+			imgui.same_line()
+			CfgChanged["FroceHideSwapInSpa"], Mod.Cfg.FroceHideSwapInSpa = imgui.checkbox("##FroceHideSwapInSpa", Mod.Cfg.FroceHideSwapInSpa)
+			imgui.same_line()
+			if Mod.Variable.IsSpaMode == true then
+				imgui.text("(IsSpaMode : On)")
+			else
+				imgui.text("(IsSpaMode : Off)")
+			end
 			imgui.spacing()
 			imgui.text("Debug : ")
 			imgui.same_line()
@@ -1100,14 +1489,14 @@ re.on_frame(function()
 				testfunction()
 			end
 			imgui.spacing()
-			imgui.text("Ticks Counter : "..tostring(Mod.Variable.TicksToWait - TickCounter))
+			imgui.text("Ticks Counter : "..tostring(Mod.Constant.TicksToWait - TickCounter))
 			imgui.spacing()
 			imgui.text("Version : "..Mod.Info.Version)
 			imgui.text("Source : "..Mod.Info.Source)
-			if imgui.is_mouse_clicked(1) then
-				imgui.set_clipboard(Mod.Info.Source)
-			end
 			if imgui.is_item_hovered() then
+				if imgui.is_mouse_clicked(1) then
+					imgui.set_clipboard(Mod.Info.Source)
+				end
 				imgui.begin_tooltip()
 				imgui.set_tooltip("Right click to copy to clipboard")
 				imgui.end_tooltip()
@@ -1117,16 +1506,13 @@ re.on_frame(function()
 		imgui.end_window()
 		for k,v in pairs(CfgChanged) do
 			if v == true then
-				SaveCfg()
+				AddOnTickCounter("DoSaveCfg", 0.5, SaveCfg, true)
 				break
 			end
 		end
 		for k,v in pairs(PresetChanged) do
 			if v == true then
-				for Name, value in pairs(Mod.Presets) do
-					ApplyPreset(Name)
-					SaveCurrentPreset(Name)
-				end
+				AddOnTickCounter("DoSaveAllPresets", 0.5, SaveAllPresets, true)
 				break
 			end
 		end
