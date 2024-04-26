@@ -1,7 +1,7 @@
 local Mod = {
 	Info = {
 		Name = "EkiToolsBox",
-		Version = "0.5.0",
+		Version = "0.5.2",
 		Contributors = "Ekibunnel",
 		Source = "https://github.com/Ekibunnel/DD2-EkiToolsBox"
 	},
@@ -17,6 +17,7 @@ local Mod = {
 	},
 	Constant = {
 		TicksToWait = 40,
+		CacheMaxAge = 60.0,
 		DefaultFurMaskMapHand = 0.05,
 		DefaultConsumeOilSecSpeed = 0.0125,
 		DefaultDragonGradeOpacity = 0.650
@@ -214,6 +215,7 @@ local Characters = {
 		Mesh = nil,
 		WeaponMesh = nil,
 		PartSwapMesh = nil,
+		Cached = { WeaponMesh = {}, PartSwapMesh = {} },
 		Human = nil,
 		LanternController = nil,
 		LanternMesh = nil,
@@ -240,7 +242,7 @@ local OnTickCounterZero = {
 
 -- hook_vtable
 
-function HookCharacterOnDestroy(NameOrIndex)
+local function HookCharacterOnDestroy(NameOrIndex)
 	local NewIndex = nil
 	if type(NameOrIndex) == "string" then
 		NewIndex = ModCharaId[NameOrIndex]
@@ -314,6 +316,7 @@ local function InitCharactersTable(Name, Index)
 		Mesh = nil,
 		WeaponMesh = nil,
 		PartSwapMesh = nil,
+		Cached = { WeaponMesh = {}, PartSwapMesh = {} },
 		Human = nil,
 		LanternController = nil,
 		LanternMesh = nil,
@@ -506,7 +509,7 @@ local function UpdateMesh(NameOrIndex)
 	Characters[NewIndex].PartSwapMesh = {}
 
 	for key, value in pairs(CharacterTransformChilds) do
-		local ValueGameObj = value:get_GameObject()
+		local ValueGameObj = value:get_GameObject() -- SUS
 		local ValueGameObjName = ValueGameObj:get_Name()
 		local ValueFolder = ValueGameObj:get_FolderSelf()
 		local ValueFolderName = nil
@@ -622,6 +625,8 @@ local function UpdateMaterialDragonGradeOpacity(NameOrIndex, Value)
 	end
 
 	local UpdatedMeshCount = 0
+	local CacheHit = 0
+	local FuncCallTime = os.clock()
 	local NewDragonGradeOpacity = Mod.Constant.DefaultDragonGradeOpacity
 
 	if Value ~= nil then
@@ -629,41 +634,70 @@ local function UpdateMaterialDragonGradeOpacity(NameOrIndex, Value)
 			NewDragonGradeOpacity = RoundNumber(Value)
 		end
 		for key, value in pairs(Characters[NewIndex].WeaponMesh) do
-			if UpdateMaterialFloat(value, nil, "DragonGrade_Opacity", NewDragonGradeOpacity) == true then
-				UpdatedMeshCount = UpdatedMeshCount + 1
+			local SkipUpdate = false
+			local ValueHashCode = value:GetHashCode()
+			--DebugLog("UpdateMaterialDragonGradeOpacity WeaponMesh GetHashCode : "..tostring(ValueHashCode))
+
+			if Characters[NewIndex].Cached.WeaponMesh[ValueHashCode] ~= nil then
+				Characters[NewIndex].Cached.WeaponMesh[ValueHashCode][2] = FuncCallTime
+				if Characters[NewIndex].Cached.WeaponMesh[ValueHashCode][1] == NewDragonGradeOpacity then
+					SkipUpdate = true
+					CacheHit = CacheHit + 1
+				end
+			end
+
+			if SkipUpdate == false then
+				if UpdateMaterialFloat(value, nil, "DragonGrade_Opacity", NewDragonGradeOpacity) == true then
+					Characters[NewIndex].Cached.WeaponMesh[ValueHashCode] = { [1] = NewDragonGradeOpacity, [2] = FuncCallTime}
+					UpdatedMeshCount = UpdatedMeshCount + 1
+				end
 			end
 		end
 
 		for key, value in pairs(Characters[NewIndex].PartSwapMesh) do
-			if UpdateMaterialFloat(value, nil, "DragonGrade_Opacity", NewDragonGradeOpacity) == true then
-				UpdatedMeshCount = UpdatedMeshCount + 1
+			local SkipUpdate = false
+			local ValueHashCode = value:GetHashCode()
+
+			if Characters[NewIndex].Cached.PartSwapMesh[ValueHashCode] ~= nil then
+				Characters[NewIndex].Cached.PartSwapMesh[ValueHashCode][2] = FuncCallTime
+				if Characters[NewIndex].Cached.PartSwapMesh[ValueHashCode][1] == NewDragonGradeOpacity then
+					SkipUpdate = true
+					CacheHit = CacheHit + 1
+				end
+			end
+
+			if SkipUpdate == false then
+				if UpdateMaterialFloat(value, nil, "DragonGrade_Opacity", NewDragonGradeOpacity) == true then
+					Characters[NewIndex].Cached.PartSwapMesh[ValueHashCode] = { [1] = NewDragonGradeOpacity, [2] = FuncCallTime}
+					UpdatedMeshCount = UpdatedMeshCount + 1
+				end
 			end
 		end
 	end
 
+	local returnvalue = false
 	if Value ~= nil and Value < 0 then
 		Mod.Presets[ModCharaId[NewIndex]].DragonGrade_Opacity = nil
-		return true
+		returnvalue = true
 	elseif UpdatedMeshCount > 0 then
 		Mod.Presets[ModCharaId[NewIndex]].DragonGrade_Opacity = NewDragonGradeOpacity
-		DebugLog("UpdateMaterialDragonGradeOpacity (value:"..tostring(Value)..") Updated "..tostring(UpdatedMeshCount).." Mesh !")
-		return true
-	end
-
-	DebugLog("UpdateMaterialDragonGradeOpacity NO Mesh updated !")
-	return false
-end
-
-local function UpdateMeshFromWeapon(Weapon)
-	local WeaponParentGameObj = Weapon:get_GameObject():get_Transform():get_Parent():get_GameObject()
-	-- DebugLog("UpdateMeshFromWeapon call from "..WeaponParentGameObj:get_Name().." !")
-	for index, value in ipairs(Characters) do
-		if value.GameObject == WeaponParentGameObj then
-			UpdateMesh(index)
-			UpdateMaterialDragonGradeOpacity(index, Mod.Presets[value.Name].DragonGrade_Opacity)
-			break
+		returnvalue = true
+		for CachedKey, Cachedvalue in pairs(Characters[NewIndex].Cached.WeaponMesh) do
+			if Cachedvalue[2] + Mod.Constant.CacheMaxAge < FuncCallTime then
+				Characters[NewIndex].Cached.WeaponMesh[CachedKey] = nil
+				DebugLog("UpdateMaterialDragonGradeOpacity WeaponMesh cleared "..tostring(CachedKey).." from cache !")
+			end
+		end
+		for CachedKey, Cachedvalue in pairs(Characters[NewIndex].Cached.PartSwapMesh) do
+			if Cachedvalue[2] + Mod.Constant.CacheMaxAge < FuncCallTime then
+				Characters[NewIndex].Cached.PartSwapMesh[CachedKey] = nil
+				DebugLog("UpdateMaterialDragonGradeOpacity PartSwapMesh cleared "..tostring(CachedKey).." from cache !")
+			end
 		end
 	end
+
+	DebugLog("UpdateMaterialDragonGradeOpacity "..tostring(UpdatedMeshCount).." Mesh updated ! ("..tostring(CacheHit).." CacheHit)")
+	return returnvalue
 end
 
 local function InitPawnsModCharaId()
@@ -740,8 +774,7 @@ local function PopulateCharacters(NameOrIndex)
 			end
 		end
 	end
-	
-	
+
 	local LanternTransform = GetChildsFromTransform(Characters[NewIndex].GameObject:get_Transform(), "lantern_000")
 	if LanternTransform ~= nil then
 		Characters[NewIndex].LanternMesh = LanternTransform:get_GameObject():call("getComponent(System.Type)", sdk.typeof("via.render.Mesh"))
@@ -930,9 +963,8 @@ local function SetupPawns()
 	end
 
 	local PawnSetup = 0
-	local AllPartyPawn = ManagedSingleton.PawnManager:getAllPartyPawn():ToArray()--:get_elements()
-	--DebugLog("ManagedSingleton.PawnManager:getAllPartyPawn() AllPartyPawn : "..tostring(AllPartyPawn))
-	--DebugLog("ManagedSingleton.PawnManager:getAllPartyPawn() AllPartyPawn get_type_definition get_full_name : "..tostring(AllPartyPawn:get_type_definition():get_full_name()))
+	local AllPartyPawn = ManagedSingleton.PawnManager:getAllPartyPawn():ToArray()
+
 	for key, value in pairs(AllPartyPawn) do
 		--DebugLog("ManagedSingleton.PawnManager:getAllPartyPawn() AllPartyPawn key : "..tostring(key).." | value : "..tostring(value))
 
@@ -976,7 +1008,7 @@ local function SetupPawns()
 	return true
 end
 
-local function AddOnTickCounter(Name, Second, Functions, Force)
+local function AddOnTickCounter(Name, Second, Functions, Args, Force)
 	if Name == nil or Second == nil or Functions == nil then
 		DebugLog("AddToOnTickCounterZero missing param, aborting !")
 		return false
@@ -989,8 +1021,15 @@ local function AddOnTickCounter(Name, Second, Functions, Force)
 		table.insert(FunctionsTable, Functions)
 	end
 
+	local FunctionsArgs = {}
+	if type(Args) == "table" then
+		FunctionsArgs = Args
+	else
+		table.insert(FunctionsArgs, Args)
+	end
+
 	if OnTickCounterZero[Name] == nil or Force == true then
-		OnTickCounterZero[Name] = { TargetTime = os.clock() + tonumber(Second), FuncTable = FunctionsTable }
+		OnTickCounterZero[Name] = { TargetTime = os.clock() + tonumber(Second), FuncTable = FunctionsTable, FuncArgs = FunctionsArgs }
 	else
 		DebugLog("AddToOnTickCounterZero there is already a "..Name.." in the queu, aborting !")
 		return false
@@ -1063,7 +1102,14 @@ re.on_pre_application_entry("UpdateBehavior", function()
 					OnTickCounterZeroKeyNum = OnTickCounterZeroKeyNum + 1
 					if value.TargetTime <= os.clock() then
 						for index, func in ipairs(value.FuncTable) do
-							func()
+							if value.FuncArgs[index] == nil then
+								func()
+							elseif type(value.FuncArgs[index]) == "table" then
+								func(table.unpack(value.FuncArgs[index]))
+							else
+								func(value.FuncArgs[index])
+							end
+							
 						end
 						OnTickCounterZero[key] = nil
 						OnTickCounterZeroKeyNum = OnTickCounterZeroKeyNum - 1
@@ -1190,15 +1236,6 @@ sdk.hook(
 )
 
 sdk.hook(
-	sdk.find_type_definition("app.Weapon"):get_method("setupReLibEPVStandardChild"),
-	function(args)
-		local Weapon = sdk.to_managed_object(args[2])
-		UpdateMeshFromWeapon(Weapon)
-	end,
-	function(retval) return retval end
-)
-
-sdk.hook(
 	sdk.find_type_definition("app.PartSwapper"):get_method("set_HideSwapObjects"),
 	function(args)
 		local CurrentPartSwapper = sdk.to_managed_object(args[2])
@@ -1225,9 +1262,51 @@ sdk.hook(
 				end
 			end
 		end
-		-- DebugLog("PartSwapper set_HideSwapObjects is not from party !")
+		-- -- DebugLog("PartSwapper set_HideSwapObjects is not from party !")
 	end,
 	function(retval) return sdk.to_ptr(0) end
+)
+
+sdk.hook(
+	sdk.find_type_definition("app.Human"):get_method("Chara_LeftWeaponChangedHandler"),
+	function(args)
+		if sdk.to_int64(args[3]) ~= 0 then
+			local Human = sdk.to_managed_object(args[2])
+			DebugLog("app.Human Chara_LeftWeaponChangedHandler Human name : "..Human:get_GameObject():get_Name())
+			for index, value in ipairs(Characters) do
+				if value.Human == Human then
+					AddOnTickCounter("WeaponChangedHandler"..tostring(index),
+					0.0,
+					{ [1] = UpdateMesh, [2] = UpdateMaterialDragonGradeOpacity },
+					{ [1] = index, [2] = { index, Mod.Presets[value.Name].DragonGrade_Opacity } }
+					)
+					break
+				end
+			end
+		end
+	end,
+	function(retval) return retval end
+)
+
+sdk.hook(
+	sdk.find_type_definition("app.Human"):get_method("Chara_RightWeaponChangedHandler"),
+	function(args)
+		if sdk.to_int64(args[3]) ~= 0 then
+			local Human = sdk.to_managed_object(args[2])
+			DebugLog("app.Human Chara_RightWeaponChangedHandler Human name : "..Human:get_GameObject():get_Name())
+			for index, value in ipairs(Characters) do
+				if value.Human == Human then
+					AddOnTickCounter("WeaponChangedHandler"..tostring(index),
+					0.0,
+					{ [1] = UpdateMesh, [2] = UpdateMaterialDragonGradeOpacity },
+					{ [1] = index, [2] = { index, Mod.Presets[value.Name].DragonGrade_Opacity } }
+					)
+					break
+				end
+			end
+		end
+	end,
+	function(retval) return retval end
 )
 
 sdk.hook(
@@ -1236,13 +1315,16 @@ sdk.hook(
 		local CurrentPartSwapperRootCharacter = sdk.to_managed_object(args[3]):get_Character()
 		for index, value in ipairs(Characters) do
 			if value.Character == CurrentPartSwapperRootCharacter then
-				UpdateMesh(index)
 				local DragonGrade_Opacity = nil
 				if Mod.Presets[value.Name] ~= nil then
 					DragonGrade_Opacity = Mod.Presets[value.Name].DragonGrade_Opacity
 				end
-				UpdateMaterialDragonGradeOpacity(index, DragonGrade_Opacity)
-				DebugLog("CharacterEditManager registerSwapRequest Updated Mesh for "..value.Name.."  !")
+				AddOnTickCounter("registerSwapRequest"..tostring(index),
+				1.0,
+				{ [1] = UpdateMesh, [2] = UpdateMaterialDragonGradeOpacity },
+				{ [1] = index, [2] = { index, DragonGrade_Opacity } }
+				)
+				DebugLog("CharacterEditManager registerSwapRequest requested update Mesh for "..value.Name.."  !")
 				break
 			end
 		end
@@ -1254,6 +1336,7 @@ sdk.hook(
 sdk.hook(
 	sdk.find_type_definition("app.SpaController"):get_method("onStart"),
 	function(args)
+		
 		if sdk.to_managed_object(args[2]):get_Owner():get_GameObject() == Characters[ModCharaId.Arisen].GameObject then
 			DebugLog("SpaController onStart !")
 			Mod.Variable.IsSpaMode = true
@@ -1273,6 +1356,9 @@ sdk.hook(
 	end,
 	function(retval) return retval end
 )
+
+
+
 
 ----- GUI
 
@@ -1449,11 +1535,11 @@ re.on_frame(function()
 			imgui.text("Presets :")
 			imgui.same_line()
 			if imgui.button("Load##LoadPreset") then
-				AddOnTickCounter("DoLoadAllPresets", 0.5, LoadAllPresets, true)
+				AddOnTickCounter("DoLoadAllPresets", 0.5, LoadAllPresets, nil , true)
 			end
 			imgui.same_line()
 			if imgui.button("Save##SavePreset") then
-				AddOnTickCounter("DoSaveAllPresets", 0.5, SaveAllPresets, true)
+				AddOnTickCounter("DoSaveAllPresets", 0.5, SaveAllPresets, nil, true)
 			end
 			imgui.spacing()
 			imgui.text("IgnoreReframeworkDrawUI : ")
@@ -1506,13 +1592,13 @@ re.on_frame(function()
 		imgui.end_window()
 		for k,v in pairs(CfgChanged) do
 			if v == true then
-				AddOnTickCounter("DoSaveCfg", 0.5, SaveCfg, true)
+				AddOnTickCounter("DoSaveCfg", 0.5, SaveCfg, nil,true)
 				break
 			end
 		end
 		for k,v in pairs(PresetChanged) do
 			if v == true then
-				AddOnTickCounter("DoSaveAllPresets", 0.5, SaveAllPresets, true)
+				AddOnTickCounter("DoSaveAllPresets", 0.5, SaveAllPresets, nil, true)
 				break
 			end
 		end
