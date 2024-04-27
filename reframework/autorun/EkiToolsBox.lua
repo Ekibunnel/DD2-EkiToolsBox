@@ -1,7 +1,7 @@
 local Mod = {
 	Info = {
 		Name = "EkiToolsBox",
-		Version = "0.5.2",
+		Version = "0.5.3",
 		Contributors = "Ekibunnel",
 		Source = "https://github.com/Ekibunnel/DD2-EkiToolsBox"
 	},
@@ -132,15 +132,42 @@ local function SavePreset(Name, Meta)
 	return json.dump_file(Mod.Info.Name.."\\"..Mod.Info.Name..".preset."..PresetName..MetaString..".json", Mod.Presets[Name])
 end
 
-local function GetChildsFromTransform(Transform, ChildGameObjectName)
+local function GetChildsFromTransform(Transform, ChildGameObjectName, ChildFolderSelfName)
+	local ChildFolderSelfNameTable = {}
+	if ChildFolderSelfName ~= nil then
+		if type(ChildFolderSelfName) == "table" then
+			for index, value in ipairs(ChildFolderSelfName) do
+				ChildFolderSelfName[index] = nil
+				ChildFolderSelfName[value] = index
+			end
+			ChildFolderSelfNameTable = ChildFolderSelfName
+		else
+			ChildFolderSelfNameTable[ChildFolderSelfName] = 1
+		end
+	end
 	--- Original function provided by alphaZomega
+	if Transform == nil then
+		DebugLog("GetChildsFromTransform Transform is nil, aborting !")
+		return nil
+	end
     local children = {}
     local child = Transform:call("get_Child")
     while child do
-		if ChildGameObjectName ~= nil and child:get_GameObject():get_Name() == ChildGameObjectName then
-			return child
+		local ChildGameObject = child:get_GameObject()
+		if ChildGameObjectName ~= nil and ChildGameObject:get_Name() == ChildGameObjectName then
+			if ChildFolderSelfName ~= nil then
+				local ChildFolder = ChildGameObject:get_FolderSelf()
+				local ChildFolderName = nil
+				if ChildFolder ~= nil then ChildFolderName = ChildFolder:get_Name() end
+				if ChildFolderSelfNameTable[ChildFolderName] ~= nil then
+					return child
+				end
+			else
+				return child
+			end
+		else
+			table.insert(children, child)
 		end
-        table.insert(children, child)
         child = child:call("get_Next")
     end
 	if ChildGameObjectName == nil then
@@ -212,6 +239,7 @@ local Characters = {
 		Meta = { _Name = nil, _Nickname = nil, NameAndNickString = "" },
 		PawnID = nil,
 		GameObject = nil,
+		HeadTransform = nil,
 		Mesh = nil,
 		WeaponMesh = nil,
 		PartSwapMesh = nil,
@@ -313,6 +341,7 @@ local function InitCharactersTable(Name, Index)
 		Meta = { _Name = nil, _Nickname = nil, NameAndNickString = "" },
 		PawnID = nil,
 		GameObject = nil,
+		HeadTransform = nil,
 		Mesh = nil,
 		WeaponMesh = nil,
 		PartSwapMesh = nil,
@@ -344,9 +373,9 @@ local function InitCharactersTableWithModCharaId()
 end
 
 local function InitPreset(Name)
-	local DefaultPreset = {
+	local DefaultPreset = { -- Value cannot be nil here else load preset won't be able to load them from file (-1 mean do reset to default value, -2 mean do nothing and be turned into nil at somepoint)
 		Fur_MaskMap_Hand = -1,
-		DragonGrade_Opacity = -1,
+		DragonGrade_Opacity = -2,
 		HideLantern = false,
 		SwapObjectsToHide = InitTableFromEnum(ExtractedEnums.SwapObjects)
 	}
@@ -432,6 +461,35 @@ local function UpdatePlayerGameObject()
 	return false
 end
 
+local function UpdateHeadTransform(NameOrIndex)
+	if NameOrIndex == nil then
+		DebugLog("UpdateHeadTransform NameOrIndex is nil !")
+		return false
+	end
+	local NewIndex = nil
+	if type(NameOrIndex) == "string" then
+		NewIndex = ModCharaId[NameOrIndex]
+	else
+		NewIndex = NameOrIndex
+	end
+	if Characters[NewIndex] == nil then
+		DebugLog("UpdateHeadTransform Characters["..NewIndex.."] is nil, aborting !")
+		return false
+	end
+	if Characters[NewIndex].GameObject == nil then
+		DebugLog("UpdateHeadTransform Characters["..NewIndex.."] GameObject is nil, aborting !")
+		return false
+	end
+	local NewHeadTransform = GetChildsFromTransform(Characters[NewIndex].GameObject:get_Transform(), "head", {"Player", "Pawn" } )
+	if NewHeadTransform ~= nil then
+		Characters[NewIndex].HeadTransform = NewHeadTransform
+		DebugLog("UpdateHeadTransform Characters["..NewIndex.."] HeadTransform updated ! "..tostring(NewHeadTransform).." @"..tostring(NewHeadTransform:get_address()))
+		return true
+	end
+	return false
+end
+
+
 local function ExtractComponentToCharacters(NameOrIndex, NameOfType)
 	if NameOfType == nil then
 		DebugLog("UpdateCharactersComponent NameOfType is nil !")
@@ -509,7 +567,7 @@ local function UpdateMesh(NameOrIndex)
 	Characters[NewIndex].PartSwapMesh = {}
 
 	for key, value in pairs(CharacterTransformChilds) do
-		local ValueGameObj = value:get_GameObject() -- SUS
+		local ValueGameObj = value:get_GameObject()
 		local ValueGameObjName = ValueGameObj:get_Name()
 		local ValueFolder = ValueGameObj:get_FolderSelf()
 		local ValueFolderName = nil
@@ -525,6 +583,25 @@ local function UpdateMesh(NameOrIndex)
 		end
 		-- DebugLog("CharacterTransformChilds['"..tostring(key).."'] : GameObj name : "..tostring(ValueGameObjName).." | FolderSelf name : "..tostring(ValueFolderName))
 	end
+
+	if Characters[NewIndex].HeadTransform ~= nil then
+		local HeadTransformChilds = GetChildsFromTransform(Characters[NewIndex].HeadTransform)
+		for Headkey, Headvalue in pairs(HeadTransformChilds) do
+			local HeadValueGameObj = Headvalue:get_GameObject()
+			local HeadValueGameObjName = HeadValueGameObj:get_Name()
+			local HeadValueFolder = HeadValueGameObj:get_FolderSelf()
+			local HeadValueFolderName = nil
+			if HeadValueFolder then
+				HeadValueFolderName = HeadValueFolder:get_Name()
+			end
+			if HeadValueFolderName == "PartSwap" and (HeadValueGameObjName == "Helm" or HeadValueGameObjName == "HelmSub") then
+				Characters[NewIndex].PartSwapMesh[HeadValueGameObjName] = HeadValueGameObj:call("getComponent(System.Type)", sdk.typeof("via.render.Mesh"))
+			end
+			-- DebugLog("HeadTransformChilds['"..tostring(Headkey).."'] : GameObj name : "..tostring(HeadValueGameObjName).." | FolderSelf name : "..tostring(HeadValueFolderName))
+		end
+	end
+
+
 	DebugLog("UpdateMesh done !")
 	return true
 end
@@ -629,7 +706,7 @@ local function UpdateMaterialDragonGradeOpacity(NameOrIndex, Value)
 	local FuncCallTime = os.clock()
 	local NewDragonGradeOpacity = Mod.Constant.DefaultDragonGradeOpacity
 
-	if Value ~= nil then
+	if Value ~= nil and Value >= -1 then
 		if Value >= 0 then
 			NewDragonGradeOpacity = RoundNumber(Value)
 		end
@@ -696,7 +773,7 @@ local function UpdateMaterialDragonGradeOpacity(NameOrIndex, Value)
 		end
 	end
 
-	DebugLog("UpdateMaterialDragonGradeOpacity "..tostring(UpdatedMeshCount).." Mesh updated ! ("..tostring(CacheHit).." CacheHit)")
+	DebugLog("UpdateMaterialDragonGradeOpacity "..tostring(UpdatedMeshCount).." Mesh updated ! ("..tostring(CacheHit).." CacheHit) ".."(value:"..tostring(Value)..")")
 	return returnvalue
 end
 
@@ -764,6 +841,8 @@ local function PopulateCharacters(NameOrIndex)
 		DebugLog("PopulateCharacters Characters["..NewIndex.."] GameObject is nil, aborting !")
 		return false
 	end
+
+	UpdateHeadTransform(NameOrIndex)
 
 	ExtractComponentToCharacters(NameOrIndex, "app.Character")
 
@@ -1153,6 +1232,42 @@ end)
 
 local function testfunction(arg)
 	-- No Spoiler
+	local MeshTable = {}
+	local PlayerTransform = Characters[ModCharaId.SubPawn01].GameObject:get_Transform()
+	local PlayerTransformChilds = GetChildsFromTransform(PlayerTransform)
+	for key, value in pairs(PlayerTransformChilds) do
+		local ValueGameObj = value:get_GameObject()
+		local ValueGameObjName = ValueGameObj:get_Name()
+		local ValueFolder = ValueGameObj:get_FolderSelf()
+		local ValueFolderName = "nil (Folder is nil)"
+		if ValueFolder then
+			ValueFolderName = ValueFolder:get_Name()
+		end
+		if ValueGameObjName == "head" and (ValueFolderName == "Player" or ValueFolderName == "Pawn")then
+			local PlayerHeadTransformChilds = GetChildsFromTransform(ValueGameObj:get_Transform())
+			for Headkey, Headvalue in pairs(PlayerHeadTransformChilds) do
+				local HeadValueGameObj = Headvalue:get_GameObject()
+				local HeadValueGameObjName = HeadValueGameObj:get_Name()
+				local HeadValueFolder = HeadValueGameObj:get_FolderSelf()
+				local HeadValueFolderName = "nil (Folder is nil)"
+				if HeadValueFolder then
+					HeadValueFolderName = HeadValueFolder:get_Name()
+				end
+				DebugLog("PlayerHeadTransformChilds['"..tostring(Headkey).."'] : GameObj name : "..tostring(HeadValueGameObjName).." | FolderSelf name : "..tostring(HeadValueFolderName))
+			end
+		end
+		if ValueFolderName == "Equipment" then
+			if ValueGameObj:call("getComponent(System.Type)", sdk.typeof("app.Weapon")) ~= nil then
+				MeshTable[ValueGameObjName] = ValueGameObj:call("getComponent(System.Type)", sdk.typeof("via.render.Mesh"))
+			end
+		elseif ValueFolderName == "PartSwap" then
+			MeshTable[ValueGameObjName] = ValueGameObj:call("getComponent(System.Type)", sdk.typeof("via.render.Mesh"))
+		end
+		DebugLog("PlayerTransformChilds['"..tostring(key).."'] : GameObj name : "..tostring(ValueGameObjName).." | FolderSelf name : "..tostring(ValueFolderName))	
+	end
+	for key, value in pairs(MeshTable) do
+		DebugLog("MeshTable['"..tostring(key).."'] : Mesh @"..tostring(value:get_address()))
+	end
 end
 
 -- Hooks
@@ -1444,43 +1559,53 @@ re.on_frame(function()
 							if HeaderState["Characters"..Character.Name.."Overwrite"] then
 								imgui.text("Body Fur Mask Map")
 								imgui.same_line()
-								if Mod.Presets[Character.Name].Fur_MaskMap_Hand == -1 or Mod.Presets[Character.Name].Fur_MaskMap_Hand == nil then
+								if Mod.Presets[Character.Name].Fur_MaskMap_Hand == nil or Mod.Presets[Character.Name].Fur_MaskMap_Hand < 0 then
 									imgui.text("(Off) : ")
+									imgui.same_line()
+									PresetChanged["Fur_MaskMap_Hand"..Character.Name], IgnoredValues["Fur_MaskMap_Hand_ToggleValue"..Character.Name] = imgui.checkbox("<-- Click here to Enable##Fur_MaskMap_Hand_Toggle"..Character.Name, false)
+									if PresetChanged["Fur_MaskMap_Hand"..Character.Name] == true then
+										Mod.Presets[Character.Name].DragonGrade_Opacity = Mod.Constant.DefaultFurMaskMapHand
+									end
 								else
 									imgui.text("(On) : ")
-								end
-								imgui.same_line()
-								PresetChanged["Fur_MaskMap_Hand"..Character.Name], IgnoredValues["Fur_MaskMap_Hand"..Character.Name] = imgui.drag_float("##Fur_MaskMap_Hand"..Character.Name, Mod.Presets[Character.Name].Fur_MaskMap_Hand, 0.01, 0.0, 1.0)
-								if imgui.is_item_hovered() then
-									if imgui.is_mouse_clicked(1) then
-										Mod.Presets[Character.Name].Fur_MaskMap_Hand = -1
-										PresetChanged["Fur_MaskMap_Hand"..Character.Name] = true
-									elseif PresetChanged["Fur_MaskMap_Hand"..Character.Name] == true then
-										Mod.Presets[Character.Name].Fur_MaskMap_Hand = IgnoredValues["Fur_MaskMap_Hand"..Character.Name]
+									imgui.same_line()
+									PresetChanged["Fur_MaskMap_Hand"..Character.Name], IgnoredValues["Fur_MaskMap_Hand"..Character.Name] = imgui.drag_float("##Fur_MaskMap_Hand"..Character.Name, Mod.Presets[Character.Name].Fur_MaskMap_Hand, 0.01, 0.0, 1.0)
+									if imgui.is_item_hovered() then
+										if imgui.is_mouse_clicked(1) then
+											Mod.Presets[Character.Name].Fur_MaskMap_Hand = -1
+											PresetChanged["Fur_MaskMap_Hand"..Character.Name] = true
+										elseif PresetChanged["Fur_MaskMap_Hand"..Character.Name] == true then
+											Mod.Presets[Character.Name].Fur_MaskMap_Hand = IgnoredValues["Fur_MaskMap_Hand"..Character.Name]
+										end
+										imgui.begin_tooltip()
+										imgui.set_tooltip("0.0 : is the default value and will make body part invisible\n0.05 : will show the body but hide the fur\n1.0 : Will show the body and the full fur no matter what, it create clipping issue between armor and fur\n\nRight-Click to turn off the overwrite")
+										imgui.end_tooltip()
 									end
-									imgui.begin_tooltip()
-									imgui.set_tooltip("0.0 : is the default value and will make body part invisible\n0.05 : will show the body but hide the fur\n1.0 : Will show the body and the full fur no matter what, it create clipping issue between armor and fur\n\nRight-Click to turn off the overwrite")
-									imgui.end_tooltip()
 								end
 								imgui.text("DragonGrade Opacity")
 								imgui.same_line()
-								if Mod.Presets[Character.Name].DragonGrade_Opacity == -1 or Mod.Presets[Character.Name].DragonGrade_Opacity == nil then
+								if Mod.Presets[Character.Name].DragonGrade_Opacity == nil or Mod.Presets[Character.Name].DragonGrade_Opacity < 0 then
 									imgui.text("(Off) : ")
+									imgui.same_line()
+									PresetChanged["DragonGrade_Opacity"..Character.Name], IgnoredValues["DragonGrade_Opacity_ToggleValue"..Character.Name] = imgui.checkbox("<-- Click here to Enable##DragonGrade_Opacity_Toggle"..Character.Name, false)
+									if PresetChanged["DragonGrade_Opacity"..Character.Name] == true then
+										Mod.Presets[Character.Name].DragonGrade_Opacity = Mod.Constant.DefaultDragonGradeOpacity
+									end
 								else
 									imgui.text("(On) : ")
-								end
-								imgui.same_line()
-								PresetChanged["DragonGrade_Opacity"..Character.Name], IgnoredValues["DragonGrade_Opacity"..Character.Name] = imgui.drag_float("##DragonGrade_Opacity"..Character.Name, Mod.Presets[Character.Name].DragonGrade_Opacity, 0.01, 0.0, 1.0)
-								if imgui.is_item_hovered() then
-									if imgui.is_mouse_clicked(1) then
-										Mod.Presets[Character.Name].DragonGrade_Opacity = -1
-										PresetChanged["DragonGrade_Opacity"..Character.Name] = true
-									elseif PresetChanged["DragonGrade_Opacity"..Character.Name] == true then
-										Mod.Presets[Character.Name].DragonGrade_Opacity = IgnoredValues["DragonGrade_Opacity"..Character.Name]
+									imgui.same_line()
+									PresetChanged["DragonGrade_Opacity"..Character.Name], IgnoredValues["DragonGrade_Opacity"..Character.Name] = imgui.drag_float("##DragonGrade_Opacity"..Character.Name, Mod.Presets[Character.Name].DragonGrade_Opacity, 0.01, 0.0, 1.0)
+									if imgui.is_item_hovered() then
+										if imgui.is_mouse_clicked(1) then
+											Mod.Presets[Character.Name].DragonGrade_Opacity = -1
+											PresetChanged["DragonGrade_Opacity"..Character.Name] = true
+										elseif PresetChanged["DragonGrade_Opacity"..Character.Name] == true then
+											Mod.Presets[Character.Name].DragonGrade_Opacity = IgnoredValues["DragonGrade_Opacity"..Character.Name]
+										end
+										imgui.begin_tooltip()
+										imgui.set_tooltip("0.0 : disable the effect\n\nRight-Click to turn off the overwrite")
+										imgui.end_tooltip()
 									end
-									imgui.begin_tooltip()
-									imgui.set_tooltip("0.0 : disable the effect\n\nRight-Click to turn off the overwrite")
-									imgui.end_tooltip()
 								end
 							end
 							imgui.set_next_item_open(HeaderState["SwapObjectsToHide"..Character.Name])
@@ -1554,11 +1679,12 @@ re.on_frame(function()
 			imgui.same_line()
 			CfgChanged["FroceHideSwapInSpa"], Mod.Cfg.FroceHideSwapInSpa = imgui.checkbox("##FroceHideSwapInSpa", Mod.Cfg.FroceHideSwapInSpa)
 			imgui.same_line()
-			if Mod.Variable.IsSpaMode == true then
-				imgui.text("(IsSpaMode : On)")
-			else
-				imgui.text("(IsSpaMode : Off)")
-			end
+			imgui.text("(IsSpaMode : "..tostring(Mod.Variable.IsSpaMode)..")")
+			-- if Mod.Variable.IsSpaMode == true then
+			-- 	imgui.text("(IsSpaMode : On)")
+			-- else
+			-- 	imgui.text("(IsSpaMode : Off)")
+			-- end
 			imgui.spacing()
 			imgui.text("Debug : ")
 			imgui.same_line()
@@ -1592,12 +1718,14 @@ re.on_frame(function()
 		imgui.end_window()
 		for k,v in pairs(CfgChanged) do
 			if v == true then
+				--DebugLog("CfgChanged Key : "..tostring(k))
 				AddOnTickCounter("DoSaveCfg", 0.5, SaveCfg, nil,true)
 				break
 			end
 		end
 		for k,v in pairs(PresetChanged) do
 			if v == true then
+				--DebugLog("PresetChanged Key : "..tostring(k))
 				AddOnTickCounter("DoSaveAllPresets", 0.5, SaveAllPresets, nil, true)
 				break
 			end
