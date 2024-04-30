@@ -1,7 +1,7 @@
 local Mod = {
 	Info = {
 		Name = "EkiToolsBox",
-		Version = "0.5.4",
+		Version = "0.5.4-A",
 		Contributors = "Ekibunnel",
 		Source = "https://github.com/Ekibunnel/DD2-EkiToolsBox"
 	},
@@ -1282,7 +1282,7 @@ sdk.hook(
 sdk.hook(
 	sdk.find_type_definition("app.HumanStaminaController"):get_method("calcConsumeStaminaValue"),
 	function(args)
-		if Mod.Cfg.InfStamina <= 3 then
+		if Mod.Cfg.InfStamina >= 3 then
 			sdk.to_managed_object(args[2]).StaminaManager:recoverAll()
 			return sdk.PreHookResult.SKIP_ORIGINAL
 		end
@@ -1290,7 +1290,7 @@ sdk.hook(
 	function(retval)
 		--DebugLog("HumanStaminaController calcConsumeStaminaValue retval : "..tostring(sdk.to_float(retval))) --spam
 		if Mod.Cfg.InfStamina > 1 then
-			if Mod.Cfg.InfStamina <= 3 then
+			if Mod.Cfg.InfStamina >= 3 then
 				return sdk.float_to_ptr(0.0)
 			elseif Mod.Cfg.InfStamina == 2 then
 				if sdk.to_float(retval) < 0.0 then
