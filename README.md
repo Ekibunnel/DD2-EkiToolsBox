@@ -8,7 +8,7 @@ Default values will not change anything to the game.
 
 Feature:
 - Infinite Stamina
-  - Choose between [Always], only when [OutOfBattle] or [Off]
+  - Choose between [Always], Always [ExceptOnSkills], only when [OutOfBattle] or [Off]
 - Infinite Lantern Oil
   - [On] or [Off]
 - Infinite NPC Carry Time
