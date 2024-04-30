@@ -1,7 +1,7 @@
 local Mod = {
 	Info = {
 		Name = "EkiToolsBox",
-		Version = "0.5.3",
+		Version = "0.5.4",
 		Contributors = "Ekibunnel",
 		Source = "https://github.com/Ekibunnel/DD2-EkiToolsBox"
 	},
@@ -1232,42 +1232,6 @@ end)
 
 local function testfunction(arg)
 	-- No Spoiler
-	local MeshTable = {}
-	local PlayerTransform = Characters[ModCharaId.SubPawn01].GameObject:get_Transform()
-	local PlayerTransformChilds = GetChildsFromTransform(PlayerTransform)
-	for key, value in pairs(PlayerTransformChilds) do
-		local ValueGameObj = value:get_GameObject()
-		local ValueGameObjName = ValueGameObj:get_Name()
-		local ValueFolder = ValueGameObj:get_FolderSelf()
-		local ValueFolderName = "nil (Folder is nil)"
-		if ValueFolder then
-			ValueFolderName = ValueFolder:get_Name()
-		end
-		if ValueGameObjName == "head" and (ValueFolderName == "Player" or ValueFolderName == "Pawn")then
-			local PlayerHeadTransformChilds = GetChildsFromTransform(ValueGameObj:get_Transform())
-			for Headkey, Headvalue in pairs(PlayerHeadTransformChilds) do
-				local HeadValueGameObj = Headvalue:get_GameObject()
-				local HeadValueGameObjName = HeadValueGameObj:get_Name()
-				local HeadValueFolder = HeadValueGameObj:get_FolderSelf()
-				local HeadValueFolderName = "nil (Folder is nil)"
-				if HeadValueFolder then
-					HeadValueFolderName = HeadValueFolder:get_Name()
-				end
-				DebugLog("PlayerHeadTransformChilds['"..tostring(Headkey).."'] : GameObj name : "..tostring(HeadValueGameObjName).." | FolderSelf name : "..tostring(HeadValueFolderName))
-			end
-		end
-		if ValueFolderName == "Equipment" then
-			if ValueGameObj:call("getComponent(System.Type)", sdk.typeof("app.Weapon")) ~= nil then
-				MeshTable[ValueGameObjName] = ValueGameObj:call("getComponent(System.Type)", sdk.typeof("via.render.Mesh"))
-			end
-		elseif ValueFolderName == "PartSwap" then
-			MeshTable[ValueGameObjName] = ValueGameObj:call("getComponent(System.Type)", sdk.typeof("via.render.Mesh"))
-		end
-		DebugLog("PlayerTransformChilds['"..tostring(key).."'] : GameObj name : "..tostring(ValueGameObjName).." | FolderSelf name : "..tostring(ValueFolderName))	
-	end
-	for key, value in pairs(MeshTable) do
-		DebugLog("MeshTable['"..tostring(key).."'] : Mesh @"..tostring(value:get_address()))
-	end
 end
 
 -- Hooks
@@ -1318,7 +1282,7 @@ sdk.hook(
 sdk.hook(
 	sdk.find_type_definition("app.HumanStaminaController"):get_method("calcConsumeStaminaValue"),
 	function(args)
-		if Mod.Cfg.InfStamina == 3 then
+		if Mod.Cfg.InfStamina <= 3 then
 			sdk.to_managed_object(args[2]).StaminaManager:recoverAll()
 			return sdk.PreHookResult.SKIP_ORIGINAL
 		end
@@ -1326,7 +1290,7 @@ sdk.hook(
 	function(retval)
 		--DebugLog("HumanStaminaController calcConsumeStaminaValue retval : "..tostring(sdk.to_float(retval))) --spam
 		if Mod.Cfg.InfStamina > 1 then
-			if Mod.Cfg.InfStamina == 3 then
+			if Mod.Cfg.InfStamina <= 3 then
 				return sdk.float_to_ptr(0.0)
 			elseif Mod.Cfg.InfStamina == 2 then
 				if sdk.to_float(retval) < 0.0 then
@@ -1336,6 +1300,17 @@ sdk.hook(
 					end
 				end
 			end
+		end
+		return retval
+	end
+)
+
+sdk.hook(
+	sdk.find_type_definition("app.HumanStaminaController"):get_method("Chara_OnConsumeStaminaHandler"),
+	function(args) end,
+	function(retval)
+		if Mod.Cfg.InfStamina == 4 then
+			return sdk.to_ptr(0)
 		end
 		return retval
 	end
@@ -1529,7 +1504,7 @@ re.on_frame(function()
 				end
 				imgui.text("Stamina ")
 				imgui.same_line()
-				CfgChanged["InfStamina"], Mod.Cfg.InfStamina = imgui.combo("##InfStamina", Mod.Cfg.InfStamina, { "Off", "OutOfBattle", "Always" })
+				CfgChanged["InfStamina"], Mod.Cfg.InfStamina = imgui.combo("##InfStamina", Mod.Cfg.InfStamina, { "Off", "OutOfBattle", "ExceptOnSkills", "Always" })
 				imgui.text("NPC Carry Time ")
 				imgui.same_line()
 				CfgChanged["InfCarryTime"], Mod.Cfg.InfCarryTime = imgui.combo("##InfPickUpTime", Mod.Cfg.InfCarryTime, { "Off", "StillResist", "On" })
@@ -1680,11 +1655,6 @@ re.on_frame(function()
 			CfgChanged["FroceHideSwapInSpa"], Mod.Cfg.FroceHideSwapInSpa = imgui.checkbox("##FroceHideSwapInSpa", Mod.Cfg.FroceHideSwapInSpa)
 			imgui.same_line()
 			imgui.text("(IsSpaMode : "..tostring(Mod.Variable.IsSpaMode)..")")
-			-- if Mod.Variable.IsSpaMode == true then
-			-- 	imgui.text("(IsSpaMode : On)")
-			-- else
-			-- 	imgui.text("(IsSpaMode : Off)")
-			-- end
 			imgui.spacing()
 			imgui.text("Debug : ")
 			imgui.same_line()
@@ -1718,14 +1688,12 @@ re.on_frame(function()
 		imgui.end_window()
 		for k,v in pairs(CfgChanged) do
 			if v == true then
-				--DebugLog("CfgChanged Key : "..tostring(k))
 				AddOnTickCounter("DoSaveCfg", 0.5, SaveCfg, nil,true)
 				break
 			end
 		end
 		for k,v in pairs(PresetChanged) do
 			if v == true then
-				--DebugLog("PresetChanged Key : "..tostring(k))
 				AddOnTickCounter("DoSaveAllPresets", 0.5, SaveAllPresets, nil, true)
 				break
 			end
