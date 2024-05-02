@@ -1,7 +1,7 @@
 local Mod = {
 	Info = {
 		Name = "EkiToolsBox",
-		Version = "0.5.6-DEV",
+		Version = "0.5.6",
 		Contributors = "Ekibunnel",
 		Source = "https://github.com/Ekibunnel/DD2-EkiToolsBox"
 	},
@@ -28,8 +28,19 @@ local Mod = {
 
 EkiToolsBox = {
 	Info = Mod.Info,
-	BlackListed = {
-		PartSwapper = {}
+	BlackListed = { -- This is made to disable part of EkiToolsBox via other lua mods
+		PartSwapper = {
+			--[[ 
+			This expect the HashCode of the PartSwapper as key and a table with your mod's name and PartSwapper as key pair value for the value
+
+			Exemple :
+				local modname = "YOUR_MOD_NAME"
+				local PartSwapperHashCode = PartSwapper:GetHashCode()
+				if EkiToolsBox.BlackListed.PartSwapper[PartSwapperHashCode] == nil then EkiToolsBox.BlackListed.PartSwapper[PartSwapperHashCode] = {} end
+				EkiToolsBox.BlackListed.PartSwapper[PartSwapperHashCode][modname] = PartSwapper
+			
+			--]]
+		}
 	}
 }
 
@@ -1357,20 +1368,26 @@ sdk.hook(
 				if value.HideSwapObjects ~= nil and CalledHideSwapObjects ~= value.HideSwapObjects then
 					if not sdk.is_managed_object(args[3]) == true then
 						Characters[index].BackupHideSwapObjects = CalledHideSwapObjects
-						DebugLog("set_HideSwapObjects CallHideSwapObjects "..value.Name.." : "..tostring(CalledHideSwapObjects))
+						DebugLog("PartSwapper set_HideSwapObjects CallHideSwapObjects "..value.Name.." : "..tostring(CalledHideSwapObjects))
 					end
 				end
 
 				local DoSkip = false
 				local PartSwapperHashCode = value.PartSwapper:GetHashCode()
 				for BLPSkey, BLPSvalue in pairs(EkiToolsBox.BlackListed.PartSwapper) do
-					if EkiToolsBox.BlackListed.PartSwapper[PartSwapperHashCode] ~= nil then
+					--DebugLog("BEFORE EkiToolsBox.BlackListed.PartSwapper["..tostring(BLPSkey).."] : "..tostring(EkiToolsBox.BlackListed.PartSwapper[BLPSkey]))
+					local next = next
+					if next(EkiToolsBox.BlackListed.PartSwapper[BLPSkey]) == nil then
+						EkiToolsBox.BlackListed.PartSwapper[BLPSkey] = nil
+					elseif DoSkip == false and EkiToolsBox.BlackListed.PartSwapper[PartSwapperHashCode] ~= nil then
 						for BLPSModkey, BLPSModvalue in pairs(EkiToolsBox.BlackListed.PartSwapper[PartSwapperHashCode]) do
-							DebugLog("set_HideSwapObjects BlackListed by "..tostring(BLPSModkey))
+							DebugLog("PartSwapper set_HideSwapObjects BlackListed by "..tostring(BLPSModkey))
 							DoSkip = true
 						end
+						-- DebugLog("EkiToolsBox.BlackListed.PartSwapper["..tostring(BLPSkey).."] : "..tostring(EkiToolsBox.BlackListed.PartSwapper[BLPSkey]))
+						if DoSkip == true then break end
 					end
-					break
+					-- DebugLog("AFTER Cleaning EkiToolsBox.BlackListed.PartSwapper["..tostring(BLPSkey).."] : "..tostring(EkiToolsBox.BlackListed.PartSwapper[BLPSkey]))
 				end
 
 				if DoSkip == false and (Mod.Cfg.FroceHideSwapInSpa == true or Mod.Variable.IsSpaMode == false) and value.HideSwapObjects ~= nil then
