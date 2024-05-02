@@ -1,7 +1,7 @@
 local Mod = {
 	Info = {
 		Name = "EkiToolsBox",
-		Version = "0.5.5",
+		Version = "0.5.6-DEV",
 		Contributors = "Ekibunnel",
 		Source = "https://github.com/Ekibunnel/DD2-EkiToolsBox"
 	},
@@ -25,6 +25,14 @@ local Mod = {
 	Variable = {},
 	Presets = {}
 }
+
+EkiToolsBox = {
+	Info = Mod.Info,
+	BlackListed = {
+		PartSwapper = {}
+	}
+}
+
 
 --- UTILS
 
@@ -896,7 +904,20 @@ local function ForceUpdate(CharacterName)
 		DebugLog("ForceUpdate skipped, IsSpaMode is ON !")
 		return false
 	end
+
 	if Characters[ModCharaId[CharacterName]].PartSwapper ~= nil then
+
+		local PartSwapperHashCode = Characters[ModCharaId[CharacterName]].PartSwapper:GetHashCode()
+		for BLPSkey, BLPSvalue in pairs(EkiToolsBox.BlackListed.PartSwapper) do
+			if EkiToolsBox.BlackListed.PartSwapper[PartSwapperHashCode] ~= nil then
+				for BLPSModkey, BLPSModvalue in pairs(EkiToolsBox.BlackListed.PartSwapper[PartSwapperHashCode]) do
+					DebugLog("ForceUpdate skipped, BlackListed by "..tostring(BLPSModkey))
+					return false
+				end
+			end
+			break
+		end
+
 		local NewHideSwapObjects = 0
 		if Characters[ModCharaId[CharacterName]].HideSwapObjects ~= nil then
 			NewHideSwapObjects = Characters[ModCharaId[CharacterName]].HideSwapObjects
@@ -1340,7 +1361,19 @@ sdk.hook(
 					end
 				end
 
-				if (Mod.Cfg.FroceHideSwapInSpa == true or Mod.Variable.IsSpaMode == false) and value.HideSwapObjects ~= nil then
+				local DoSkip = false
+				local PartSwapperHashCode = value.PartSwapper:GetHashCode()
+				for BLPSkey, BLPSvalue in pairs(EkiToolsBox.BlackListed.PartSwapper) do
+					if EkiToolsBox.BlackListed.PartSwapper[PartSwapperHashCode] ~= nil then
+						for BLPSModkey, BLPSModvalue in pairs(EkiToolsBox.BlackListed.PartSwapper[PartSwapperHashCode]) do
+							DebugLog("set_HideSwapObjects BlackListed by "..tostring(BLPSModkey))
+							DoSkip = true
+						end
+					end
+					break
+				end
+
+				if DoSkip == false and (Mod.Cfg.FroceHideSwapInSpa == true or Mod.Variable.IsSpaMode == false) and value.HideSwapObjects ~= nil then
 					CurrentPartSwapper:set_field("_HideSwapObjects", value.HideSwapObjects)
 					CurrentPartSwapper:set_field("_UpdateStatusOfSwapObjects", true)
 					-- DebugLog("PartSwapper set_HideSwapObjects spoofed for "..tostring(value.Name).." !")
