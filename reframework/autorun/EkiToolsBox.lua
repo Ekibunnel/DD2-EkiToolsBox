@@ -1,7 +1,7 @@
 local Mod = {
 	Info = {
 		Name = "EkiToolsBox",
-		Version = "0.5.4-A",
+		Version = "0.5.5",
 		Contributors = "Ekibunnel",
 		Source = "https://github.com/Ekibunnel/DD2-EkiToolsBox"
 	},
@@ -1340,12 +1340,8 @@ sdk.hook(
 					end
 				end
 
-				if Mod.Cfg.FroceHideSwapInSpa == true or Mod.Variable.IsSpaMode == false then
-					if value.HideSwapObjects ~= nil then
-						CurrentPartSwapper:set_field("_HideSwapObjects", value.HideSwapObjects)
-					else
-						CurrentPartSwapper:set_field("_HideSwapObjects", 0)
-					end
+				if (Mod.Cfg.FroceHideSwapInSpa == true or Mod.Variable.IsSpaMode == false) and value.HideSwapObjects ~= nil then
+					CurrentPartSwapper:set_field("_HideSwapObjects", value.HideSwapObjects)
 					CurrentPartSwapper:set_field("_UpdateStatusOfSwapObjects", true)
 					-- DebugLog("PartSwapper set_HideSwapObjects spoofed for "..tostring(value.Name).." !")
 					return sdk.PreHookResult.SKIP_ORIGINAL
