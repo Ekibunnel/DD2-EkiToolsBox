@@ -1,7 +1,7 @@
 local Mod = {
 	Info = {
 		Name = "EkiToolsBox",
-		Version = "0.5.6",
+		Version = "0.5.7",
 		Contributors = "Ekibunnel",
 		Source = "https://github.com/Ekibunnel/DD2-EkiToolsBox"
 	},
@@ -267,6 +267,7 @@ local Characters = {
 		LanternController = nil,
 		LanternMesh = nil,
 		Character = nil,
+		CharacterID = {},
 		HideSwapObjects = nil,
 		BackupHideSwapObjects = nil,
 		CaughtController = nil,
@@ -284,6 +285,7 @@ local OnTickCounterZero = {
 	DoForceUpdateAll = nil,
 	DoSetupLantern = nil
 }
+
 
 --- MAIN
 
@@ -324,7 +326,8 @@ end
 local function InitModVariable()
 	Mod.Variable = {
 		BackupConsumeOilSecSpeed = nil,
-		IsSpaMode = false
+		IsSpaMode = false,
+		CloneToDoTable = {}
 	}
 	if ManagedSingleton.SpaManager ~= nil then
 		Mod.Variable.IsSpaMode = ManagedSingleton.SpaManager:get_IsActiveSpa()
@@ -369,6 +372,7 @@ local function InitCharactersTable(Name, Index)
 		LanternController = nil,
 		LanternMesh = nil,
 		Character = nil,
+		CharacterID = {},
 		HideSwapObjects = nil,
 		BackupHideSwapObjects = nil,
 		CaughtController = nil,
@@ -658,7 +662,7 @@ local function UpdateMaterialFloat(Mesh, MaterialName, VariableName, VariableVal
 			if MaterialVariableName ~= nil then
 				if MaterialVariableName == VariableName then
 					Mesh:setMaterialFloat(value, i, VariableValue)
-					--DebugLog("UpdateMaterialFloat Material index "..tostring(value).." : "..VariableName.." set to "..tostring(VariableValue).." for Mesh @"..Mesh:get_address().." !")
+					-- DebugLog("UpdateMaterialFloat Material index "..tostring(value).." : "..VariableName.." set to "..tostring(VariableValue).." for Mesh @"..Mesh:get_address().." !")
 				end
 			end
 		end
@@ -863,8 +867,13 @@ local function PopulateCharacters(NameOrIndex)
 
 	UpdateHeadTransform(NameOrIndex)
 
-	ExtractComponentToCharacters(NameOrIndex, "app.Character")
-
+	
+	if ExtractComponentToCharacters(NameOrIndex, "app.Character") then
+		local CharaID = Characters[NewIndex].Character:get_CharaID()
+		local CharaIDString = Characters[NewIndex].Character:get_CharaIDString()
+		Characters[NewIndex].CharacterID[CharaID] = CharaIDString
+		Characters[NewIndex].CharacterID[CharaIDString] = CharaID
+	end
 	if ExtractComponentToCharacters(NameOrIndex, "app.Human") then
 		if UpdateLanternController(NameOrIndex) then
 			if Characters[NewIndex].PawnID == nil then
@@ -910,7 +919,7 @@ local function UpdateLantern(CharacterName)
 	return true
 end
 
-local function ForceUpdate(CharacterName)
+local function ForceUpdate(CharacterName, CustomTargetPartSwapper)
 	if Mod.Cfg.FroceHideSwapInSpa == false and Mod.Variable.IsSpaMode == true then
 		DebugLog("ForceUpdate skipped, IsSpaMode is ON !")
 		return false
@@ -933,16 +942,24 @@ local function ForceUpdate(CharacterName)
 		if Characters[ModCharaId[CharacterName]].HideSwapObjects ~= nil then
 			NewHideSwapObjects = Characters[ModCharaId[CharacterName]].HideSwapObjects
 		end
+		local TargetPartSwapper = Characters[ModCharaId[CharacterName]].PartSwapper
+		if CustomTargetPartSwapper ~= nil then
+			TargetPartSwapper = CustomTargetPartSwapper
+		end
 		local status, Error = pcall(function ()
-			Characters[ModCharaId[CharacterName]].PartSwapper:set_HideSwapObjects(NewHideSwapObjects)
-			Characters[ModCharaId[CharacterName]].PartSwapper:call("forceUpdateStatusOfSwapObjects")
+			TargetPartSwapper:set_HideSwapObjects(NewHideSwapObjects)
+			TargetPartSwapper:call("forceUpdateStatusOfSwapObjects")
 		end)
 		if not status then
-			DebugLog("ForceUpdate failled, status :"..tostring(status).." | error : "..type(Error).." : "..tostring(Error))
+			DebugLog("ForceUpdate failled, PartSwapper : "..tostring(TargetPartSwapper).."@"..tostring(TargetPartSwapper:get_address()).." status :"..tostring(status).." | error : "..type(Error).." : "..tostring(Error))
 			return false
 		end
 
-		DebugLog("ForceUpdate called for Characters[ModCharaId["..CharacterName.."]] !")
+		if CustomTargetPartSwapper ~= nil then
+			DebugLog("ForceUpdate called for CustomTargetPartSwapper : "..tostring(TargetPartSwapper).."@"..tostring(TargetPartSwapper:get_address()).." with the preset of Characters[ModCharaId["..CharacterName.."]] !")
+		else
+			DebugLog("ForceUpdate called for Characters[ModCharaId["..CharacterName.."]] ! (PartSwapper:"..tostring(TargetPartSwapper).."@"..tostring(TargetPartSwapper:get_address())..")")
+		end
 		return true
 	end
 end
@@ -1056,6 +1073,7 @@ local function SetupArisen()
 
 	return true
 end
+
 
 local function SetupPawns()
 	if ManagedSingleton.PawnManager == nil then UpdateAppSingleton("PawnManager") end
@@ -1187,6 +1205,22 @@ end
 local function SetupLantern()
 	UpdateAllLantern()
 	ApplyAllInfLanternOil()
+end
+
+local function ApplyClone(Name, CloneBuilder)
+	if Name == nil or CloneBuilder == nil then
+		DebugLog("ApplyClone missing param, aborting !")
+		return false
+	end
+
+	local CloneGameObj = CloneBuilder:get_GameObject()
+	-- DebugLog("ApplyClone CloneBuilder : "..tostring(CloneBuilder).."@"..tostring(CloneBuilder:get_address()).." !")
+	if Mod.Presets[Name].Fur_MaskMap_Hand ~= nil and Mod.Presets[Name].Fur_MaskMap_Hand >= 0 then
+		if UpdateMaterialFloat(CloneGameObj:call("getComponent(System.Type)", sdk.typeof("via.render.Mesh")), "body_mat", "Fur_MaskMap_Hand", Mod.Presets[Name].Fur_MaskMap_Hand) then
+			DebugLog("ApplyClone Fur_MaskMap_Hand for "..CloneGameObj:get_Name().." updated to "..tostring(Mod.Presets[Name].Fur_MaskMap_Hand))
+		end
+	end
+	ForceUpdate(Name, CloneBuilder:get_PartSwapper())
 end
 
 re.on_pre_application_entry("UpdateBehavior", function()
@@ -1429,7 +1463,7 @@ sdk.hook(
 	function(args)
 		if sdk.to_int64(args[3]) ~= 0 then
 			local Human = sdk.to_managed_object(args[2])
-			DebugLog("app.Human Chara_RightWeaponChangedHandler Human name : "..Human:get_GameObject():get_Name())
+			-- DebugLog("app.Human Chara_RightWeaponChangedHandler Human name : "..Human:get_GameObject():get_Name())
 			for index, value in ipairs(Characters) do
 				if value.Human == Human then
 					AddOnTickCounter("WeaponChangedHandler"..tostring(index),
@@ -1494,7 +1528,36 @@ sdk.hook(
 )
 
 
+sdk.hook(
+	sdk.find_type_definition("app.CloneBuilder"):get_method("requestBuild(app.CharacterID, System.Byte, System.Byte, System.Boolean, System.Action`1<via.GameObject>, System.Byte, app.charaedit.ch000.Define.BuildOption)"),
+	function(args)
+        local callCloneBuilder = sdk.to_managed_object(args[2])
+		local callCharacterID = sdk.to_int64(args[3])
+		for index, value in ipairs(Characters) do
+			if value.CharacterID[callCharacterID] ~= nil then
+				Mod.Variable.CloneToDoTable[callCloneBuilder:GetHashCode()] = value.Name
+				break
+			end
+		end
+	end,
+	function(retval)
+		return retval
+	end
+)
 
+sdk.hook(
+	sdk.find_type_definition("app.CloneBuilder"):get_method("onCompletedBuild(via.GameObject)"),
+	function(args)
+        local callCloneBuilder = sdk.to_managed_object(args[2])
+		local callCloneBuilderHash = callCloneBuilder:GetHashCode()
+		local CloneToDoHashValue = Mod.Variable.CloneToDoTable[callCloneBuilderHash]
+		if CloneToDoHashValue ~= nil then
+			ApplyClone(CloneToDoHashValue, callCloneBuilder)
+			Mod.Variable.CloneToDoTable[callCloneBuilderHash] = nil
+		end
+	end,
+	function(retval) return retval end
+)
 
 ----- GUI
 
